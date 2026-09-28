@@ -1562,14 +1562,14 @@ function initWorldMap(){
       }
       WMAP.pinchD=d; WMAP.moved=true;
     } else if(ks.length===1){
-      if(Math.abs(e.clientX-WMAP.downXY.x)+Math.abs(e.clientY-WMAP.downXY.y)>8) WMAP.moved=true;
+      if(Math.abs(e.clientX-WMAP.downXY.x)+Math.abs(e.clientY-WMAP.downXY.y)>16) WMAP.moved=true;
       WMAP.cam.x-=dx/WMAP.cam.z; WMAP.cam.y-=dy/WMAP.cam.z;
       clampCam();
     }
     drawWorld();
   });
   function endPointer(e){
-    const wasTap=!WMAP.moved && (Date.now()-WMAP.downAt)<400;
+    const wasTap=!WMAP.moved && (Date.now()-WMAP.downAt)<750;
     delete WMAP.pointers[e.pointerId];
     if(Object.keys(WMAP.pointers).length<2) WMAP.pinchD=0;
     if(wasTap && e.type==='pointerup'){
@@ -1611,10 +1611,10 @@ function worldTap(sx,sy){
     confirmOutpost(Math.max(200,Math.min(WORLD-200,Math.round(w.x))), Math.max(200,Math.min(WORLD-200,Math.round(w.y))));
     drawWorld(); return;
   }
-  let best=null, bd=40;
+  let best=null, bd=1e9;
   for(const e of WMAP.drawn){
-    const d=Math.hypot(e.sx-sx,e.sy-sy);
-    if(d<bd){ bd=d; best=e; }
+    const r=e.r||40, d=Math.hypot(e.sx-sx,e.sy-sy);
+    if(d<r && d<bd){ bd=d; best=e; }
   }
   selectWorldEntity(best?best.id:null);
 }
@@ -5815,7 +5815,9 @@ function buildTerrain(){
   /* tab bar polish */
   '#tabbar{background:rgba(43,29,16,.96);border-top:2px solid #C88F2E}'+
   '.tabbtn{color:#C9B586}'+
-  '.tabbtn.active{color:#FFD766}';
+  '.tabbtn.active{color:#FFD766}'+
+  /* gather composer: keep the title clear of the parchment frame's ornaments */
+  '#modal h3:first-child{margin:48px 10px 8px;text-align:center}';
   document.head.appendChild(st);
 })();
 
@@ -5929,7 +5931,7 @@ function drawWorld(){
     // battle scars on attacked (not yet cleared) nodes: smoke -> fire -> burning
     const nrec=S.nodes[n.id];
     if(nrec&&nrec.dmg&&!cleared&&n.kind!=='gather') drawSiegeFire(c,p.x,p.y,s,Math.min(3,nrec.dmg),now);
-    m.drawn.push({id:n.id,sx:p.x,sy:p.y});
+    m.drawn.push({id:n.id,sx:p.x,sy:p.y,r:n.kind==='gather'?Math.max(56,s*3.4):44});
   }
   // AI kingdoms — decluttered: icons always, labels deduped by spatial hash at far zoom.
   const far=z<0.18;
@@ -5988,7 +5990,7 @@ function drawWorld(){
         if(krec&&krec.dmg&&!cleared) drawSiegeFire(c,p.x,p.y,fs2,Math.min(3,krec.dmg),now);
       }
     }
-    m.drawn.push({id:k.id,sx:p.x,sy:p.y});
+    m.drawn.push({id:k.id,sx:p.x,sy:p.y,r:46});
   }
   // player city at world center
   {
@@ -6024,7 +6026,7 @@ function drawWorld(){
     const pfs=Math.min(14,kfs+1.5);
     drawPlaque(c,p.x,p.y-s*2.3,(S.kingdomName||'Troy'),{fs:pfs,clampW:W});
     }
-    m.drawn.push({id:'player',sx:p.x,sy:p.y});
+    m.drawn.push({id:'player',sx:p.x,sy:p.y,r:52});
     // raid warning: smoke rises over Troy while the warband approaches
     if(S.raidsOn&&S.raidWarnAt&&now>=S.raidWarnAt&&now<S.nextRaidAt) drawSiegeFire(c,p.x,p.y,20,1,now);
   }
