@@ -800,6 +800,144 @@ function genWorld(){
   }
   return {kingdoms:kingdoms, extra:extra, tick:0, feed:feed, aiMarches:aiMarches};
 }
+/* ================= Wild resource nodes (Charlie 2026-09-28) =================
+   Every resource-looking decoration (rock piles, trees, bushes) is a real,
+   tappable gather node — all stone, all food, all trees collectible by ANY
+   kingdom's army. Depleted nodes despawn and respawn elsewhere in the wilds. */
+const WILD_DECOR_RES={bush:'food', olive:'wood', cypress:'wood', 'deco-rocks':'stone'};
+const WILD_NAMES={
+  stone:['Stone Outcrop','Rocky Knoll','Boulder Field','Flint Ridge','Crag Shelf','Pebble Wash'],
+  food:['Wild Wheat','Berry Thicket','Grain Patch','Herb Meadow','Fig Grove','Barley Stand'],
+  wood:['Cedar Stand','Olive Grove','Pine Copse','Cypress Row','Timber Clump','Oak Hollow']};
+const WILD_FLAVOR={food:'Wild grain ripe for the taking.',wood:'Tall trees, free for the cutting.',stone:'Pale stone jutting from the earth.'};
+function wildNodeAmt(){ return 1200+Math.floor(Math.random()*1100); }   // ~5-9 full trips per node
+function wildMarchSecs(wx,wy){ return Math.round(30+Math.hypot(wx-WORLD_CX,wy-WORLD_CY)/WORLD*150); }
+function makeWildNode(res,wx,wy,spr,sprSc,sprR){
+  const W=S.world; W.wildSeq=(W.wildSeq||0)+1;
+  const pool=WILD_NAMES[res];
+  return {id:'w'+W.wildSeq, kind:'gather', res:res, name:pool[Math.floor(Math.random()*pool.length)],
+    wx:Math.round(wx), wy:Math.round(wy), march:wildMarchSecs(wx,wy), flavor:WILD_FLAVOR[res],
+    wild:true, depletable:true, spr:spr||null, sprSc:sprSc||1, sprR:sprR||1, amt:wildNodeAmt()};
+}
+function registerWildNode(n){
+  n.x=n.wx/WORLD*100; n.y=n.wy/WORLD*100;
+  if(!NODE_BY_ID[n.id]){ NODES.push(n); NODE_BY_ID[n.id]=n; }
+}
+function unregisterWildNode(id){
+  delete NODE_BY_ID[id];
+  const i=NODES.findIndex(n=>n.id===id); if(i>=0) NODES.splice(i,1);
+}
+/* random valid spot for a node: clear of Troy, rival kingdoms, and all nodes */
+function wildSpot(){
+  const W=S.world;
+  const keep=[[WORLD_CX,WORLD_CY,600]];
+  for(const k of (W.kingdoms||[])) keep.push([k.wx,k.wy,420]);
+  for(const n of NODES){ if(n.wx!==undefined) keep.push([n.wx,n.wy,380]); }
+  for(const n of (W.extra||[])){ if(n.wx!==undefined&&!NODE_BY_ID[n.id]) keep.push([n.wx,n.wy,380]); }
+  for(let t=0;t<600;t++){
+    const x=700+Math.random()*(WORLD-1400), y=700+Math.random()*(WORLD-1400);
+    let ok=true;
+    for(const k of keep){ const dx=x-k[0],dy=y-k[1]; if(dx*dx+dy*dy<k[2]*k[2]){ ok=false; break; } }
+    if(ok) return {x:Math.round(x),y:Math.round(y)};
+  }
+  return null;
+}
+/* a node hit zero reserves: remove it and spawn a same-resource replacement
+   elsewhere. Safe mid-tick; marches targeting the old id are guarded. */
+function depleteNode(id){
+  const n=NODE_BY_ID[id]; if(!n||!n.depletable) return;
+  const W=S.world, res=n.res, nm=n.name;
+  if(W.extra){ const i=W.extra.findIndex(e=>e.id===id); if(i>=0) W.extra.splice(i,1); }
+  unregisterWildNode(id);
+  if(WMAP&&WMAP.sel===id) selectWorldEntity(null);
+  const sp=wildSpot();
+  if(sp){
+    const nn=makeWildNode(res,sp.x,sp.y,null,0.9+Math.random()*0.6,Math.random()<0.5?-1:1);
+    W.extra.push(nn); registerWildNode(nn);
+    pushFeed('\u26CF '+nm+' was worked out \u2014 a new '+nn.name+' rises in the wilds.');
+    toast('\u26CF '+nm+' depleted \u2014 a new '+RES_NAME[res]+' site has appeared elsewhere.');
+  } else {
+    pushFeed('\u26CF '+nm+' was worked out.');
+  }
+  save(); if(WMAP) drawWorld();
+}
+/* ---- Rival-kingdom gatherers ("by any kingdom", Charlie 2026-09-28) ----
+   Every so often a nearby rival kingdom sends a small party to a wild node.
+   They walk out, work the node (consuming real stock), and walk home. Pure
+   data + canvas; never touches battles, quests, or the player's armies. */
+function aiGathererPos(g,now){
+  if((g.phase==='out'||g.phase==='back')&&g.t1>g.t0){
+    const t=Math.max(0,Math.min(1,(now-g.t0)/(g.t1-g.t0)));
+    return {x:g.x0+(g.x1-g.x0)*t, y:g.y0+(g.y1-g.y0)*t};
+  }
+  return {x:g.x1,y:g.y1};
+}
+function tickAIGatherers(){
+  const W=S.world; if(!W) return; const now=nowMs();
+  W.aiGatherers=W.aiGatherers||[];
+  for(const g of W.aiGatherers){
+    if(g.done) continue;
+    if(g.phase==='out'&&now>=g.t1){ g.phase='gather'; g.t1=now+16000+Math.random()*12000; }
+    else if(g.phase==='gather'&&now>=g.t1){
+      const n=NODE_BY_ID[g.nodeId];
+      if(n&&n.depletable){
+        const bite=Math.min(n.amt,150+Math.floor(Math.random()*150));
+        n.amt-=bite;
+        if(n.amt<=0) depleteNode(n.id);
+      }
+      const k=(W.kingdoms||[]).find(k=>k.id===g.kid);
+      g.phase='back'; g.x0=g.x1; g.y0=g.y1;
+      g.x1=k?k.wx:WORLD_CX; g.y1=k?k.wy:WORLD_CY;
+      g.t0=now; g.t1=now+g.travelMs;
+    }
+    else if(g.phase==='back'&&now>=g.t1){ g.done=true; }
+  }
+  const before=W.aiGatherers.length;
+  W.aiGatherers=W.aiGatherers.filter(g=>!g.done);
+  if(W.aiGatherers.length<3&&Math.random()<0.22){
+    const ks=(W.kingdoms||[]).filter(k=>{ const r=S.nodes[k.id]; return !(r&&r.cleared); });
+    if(ks.length){
+      const k=ks[(Math.random()*ks.length)|0];
+      const busy=new Set();
+      for(const m of (S.marches||[])) busy.add(m.nodeId);
+      for(const f of (S.fm||[])) if(!f.done&&f.destId) busy.add(f.destId);
+      for(const g of W.aiGatherers) busy.add(g.nodeId);
+      const cands=NODES.filter(n=>n.kind==='gather'&&n.depletable&&(n.amt||0)>200&&
+        !busy.has(n.id)&&Math.hypot(n.wx-k.wx,n.wy-k.wy)<3000);
+      if(cands.length){
+        const n=cands[(Math.random()*cands.length)|0];
+        const dist=Math.hypot(n.wx-k.wx,n.wy-k.wy);
+        const travelMs=Math.max(5000,dist/80*1000);
+        W.aiGatherers.push({kid:k.id,tag:k.tag,nodeId:n.id,phase:'out',
+          t0:now,t1:now+travelMs,travelMs:travelMs,x0:k.wx,y0:k.wy,x1:n.wx,y1:n.wy});
+      }
+    }
+  }
+  if(W.aiGatherers.length!==before) save();
+}
+function drawAIGatherers(c,now){
+  const W=S.world; if(!W||!W.aiGatherers||!WMAP) return;
+  const r=WMAP.canvas.getBoundingClientRect(), vw=r.width, vh=r.height;
+  for(const g of W.aiGatherers){
+    if(g.done) continue;
+    const p=aiGathererPos(g,now), s=w2s(p.x,p.y);
+    if(s.x<-40||s.y<-40||s.x>vw+40||s.y>vh+40) continue;
+    const col=TAG_COLORS[g.tag]||'#c9a227';
+    if(g.phase!=='gather'){
+      const a=w2s(g.x0,g.y0), b=w2s(g.x1,g.y1);
+      c.strokeStyle='rgba(200,170,120,0.35)'; c.lineWidth=1.5; c.setLineDash([4,7]);
+      c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke(); c.setLineDash([]);
+    } else {
+      c.strokeStyle='rgba(232,200,106,0.5)'; c.lineWidth=1.5;
+      c.beginPath(); c.arc(s.x,s.y,14+3*Math.sin(now/300),0,7); c.stroke();
+    }
+    for(let i=0;i<3;i++){
+      const ox=(i-1)*6, oy=(i%2)*5;
+      c.fillStyle='#4a3620'; c.beginPath(); c.arc(s.x+ox,s.y+oy,4,0,7); c.fill();
+      c.fillStyle=col; c.beginPath(); c.arc(s.x+ox,s.y+oy,1.8,0,7); c.fill();
+    }
+  }
+}
 let WORLD_REG=false;
 function ensureWorld(){
   if(!S) return;
@@ -846,6 +984,26 @@ function ensureWorld(){
         W.details.push({x:Math.round(hn.wx+Math.cos(da)*dd),y:Math.round(hn.wy+Math.sin(da)*dd),
           k:dk,sc:0.9+hrnd()*0.6,r:hrnd()<0.5?-1:1});
       }
+    }
+    save();
+  }
+  /* WILD-NODE migration (2026-09-28, Charlie's order): every resource-looking
+     decoration (rock piles, trees, bushes) becomes a real gather node — all
+     stone, all food, all trees collectible. Ruins stay decorative. Runs once
+     per world; new worlds flow through the same path. */
+  if(!W.wildDone){
+    W.wildDone=true;
+    if(!W.extra) W.extra=[];
+    const keepDet=[];
+    for(const d of (W.details||[])){
+      const res=WILD_DECOR_RES[d.k];
+      if(res){ const n=makeWildNode(res,d.x,d.y,d.k,d.sc,d.r); W.extra.push(n); registerWildNode(n); }
+      else keepDet.push(d);
+    }
+    W.details=keepDet;
+    /* the seeded extra gather sites (non-gold) deplete and respawn like wild ones */
+    for(const n of W.extra){
+      if(n.kind==='gather'&&!n.wild&&n.res!=='gold'&&!n.depletable){ n.depletable=true; n.amt=n.amt||wildNodeAmt(); }
     }
     save();
   }
@@ -2094,7 +2252,7 @@ function drawWorld(){
       const nfs=Math.max(9,Math.min(12,10*z+3));
       // an active march owns this node visually (camp/workers/floaters) — keep its airspace clear
       const hasMarch=S.marches.some(mm=>mm.nodeId===n.id);
-      const nplq=hasMarch?null:drawPlaque(c,p.x,ty,n.name,{fs:nfs});
+      const nplq=(hasMarch||n.wild)?null:drawPlaque(c,p.x,ty,n.name,{fs:nfs});
       if(n.tier&&nplq){
         const bw2=Math.max(7,Math.min(11,8*z+2)); // badge hangs below the plaque with a real gap
         drawLevelBadge(c,p.x,ty+nplq.h/2+bw2*1.12+6,n.tier,bw2);
@@ -2329,11 +2487,13 @@ function sheetHTML(id){
     if(n.kind==='gather'&&!cleared){
       // three-stat node card, always scannable: Reserves / Gatherer / Owner + one action
       const resName=RES_NAME[n.res]||n.res;
-      const gstat=march
+      const aiOnSite=((S.world&&S.world.aiGatherers)||[]).filter(g=>g.nodeId===id&&!g.done).length;
+      let gstat=march
         ? (march.phase==='out'?'Warband marching ('+fmtT(Math.max(0,(march.arriveAt-nowMs())/1000))+')'
            :march.phase==='gather'?'Your warband — on site':'Warband returning')
         : '—';
-      const owner=inPlayerTerritory(n.wx,n.wy)?'Your territory':'Unclaimed wilds';
+      if(aiOnSite>0) gstat+=(gstat==='—'?'':' · ')+aiOnSite+' rival gatherer'+(aiOnSite>1?'s':'')+' on site';
+      const owner=inPlayerTerritory(n.wx,n.wy)?'Neutral · inside your territory':'Neutral · contested';
       const lvlTxt=n.lvl?('Level '+n.lvl+' '):'';
       let action='';
       if(march&&march.phase==='gather'){
@@ -2350,7 +2510,7 @@ function sheetHTML(id){
       }
       btns='<div class="nodecard" style="flex:1 1 100%">'+
         '<div class="nodecard-head"><span class="lvl">'+esc(lvlTxt+resName+' Deposit')+'</span>'+esc(title)+'</div>'+
-        '<div class="nstat"><span>Reserves</span><b>Bountiful · endless</b></div>'+
+        '<div class="nstat"><span>Reserves</span><b>'+(n.depletable?fmtN(Math.max(0,Math.round(n.amt||0)))+' '+esc(resName):'Bountiful · endless')+'</b></div>'+
         '<div class="nstat"><span>Gatherer</span><b>'+esc(gstat)+'</b></div>'+
         '<div class="nstat" style="border-bottom:none"><span>Owner</span><b>'+esc(owner)+'</b></div>'+
         action+'</div>';
@@ -2979,12 +3139,23 @@ function fmArrive(f){
 }
 function fmGatherDone(f){
   const n=NODE_BY_ID[f.destId];
+  if(!n||n.kind!=='gather'){
+    // the deposit was worked out (and respawned elsewhere) while gathering
+    f.cargo=null;
+    fmSetLeg(f, WORLD_CX, WORLD_CY, 'return', null);
+    toast('⛏ The deposit was exhausted — warband returning.');
+    return;
+  }
   const t=fmTroopTotal(f);
-  f.cargo={}; f.cargo[n.res]=Math.round(t*GATHER_YIELD*gatherSiteMult(n));
+  const full=Math.round(t*GATHER_YIELD*gatherSiteMult(n));
+  let take=full;
+  if(n.depletable){ take=Math.min(full,Math.max(0,Math.round(n.amt||0))); n.amt=(n.amt||0)-take; }
+  f.cargo={}; f.cargo[n.res]=take;
   ensureRecords();
   if(f.cargo[n.res]>S.records.bestGather) S.records.bestGather=f.cargo[n.res];
   S.stats.gathers++;
   addPlayerXP(XP_GATHER);
+  if(n.depletable&&n.amt<=0) depleteNode(n.id);
   fmSetLeg(f, WORLD_CX, WORLD_CY, 'return', null);
   toast('⛏ Gathering done — warband returning with the spoils.');
 }
@@ -3741,7 +3912,11 @@ function tickMarches(silent){
     if(m.hero===true) m.hero='theron';   // normalize ancient saves
     const node = NODE_BY_ID[m.nodeId];
     if(m.phase==='out' && nowMs()>=m.arriveAt){
-      if(node.kind==='gather'){
+      if(!node){
+        // the deposit was worked out (and respawned elsewhere) while marching
+        m.phase='back'; m.returnAt = nowMs()+m.marchSecs*1000;
+        if(!silent) toast('The deposit was exhausted — warband returning.');
+      } else if(node.kind==='gather'){
         m.phase='gather'; m.gatherAt = nowMs()+GATHER_TIME*gatherTimeMult(m.hero)*1000;
         if(!silent) toast('\u26fa Gatherers arrived at '+esc(node.name)+' — collecting '+RES_NAME[node.res]+'\u2026');
       } else {
@@ -3750,14 +3925,25 @@ function tickMarches(silent){
       }
       changed=true;
     } else if(m.phase==='gather' && nowMs()>=m.gatherAt){
+      if(!node){
+        // worked out from under us (a rival kingdom or another warband) — head home
+        m.cargo=null; m.phase='back'; m.returnAt = nowMs()+m.marchSecs*1000;
+        if(!silent) toast('The deposit was exhausted — gatherers returning empty-handed.');
+        changed=true;
+      } else {
       const n = armyTotal(m.troops);
-      m.cargo = {}; m.cargo[node.res] = Math.round(n*GATHER_YIELD*gatherSiteMult(node));
+      const full=Math.round(n*GATHER_YIELD*gatherSiteMult(node));
+      let take=full;
+      if(node.depletable){ take=Math.min(full,Math.max(0,Math.round(node.amt||0))); node.amt=(node.amt||0)-take; }
+      m.cargo = {}; m.cargo[node.res] = take;
       ensureRecords();
       if(m.cargo[node.res]>S.records.bestGather) S.records.bestGather=m.cargo[node.res];
       S.stats.gathers++;
       addPlayerXP(XP_GATHER);
+      if(node.depletable&&node.amt<=0) depleteNode(node.id);
       m.phase='back'; m.returnAt = nowMs()+m.marchSecs*1000;
       changed=true;
+      }
     } else if(m.phase==='back' && nowMs()>=m.returnAt){
       // deliver survivors + cargo
       const sv = m.survivors||m.troops;
@@ -3766,7 +3952,10 @@ function tickMarches(silent){
       if(m.hero) S.hero.away=false;
       m.done=true; changed=true;
       // battle reports were already shown at resolve time; only toast gather returns here
-      if(m.cargo && !silent) toast('Gatherers returned: +'+fmtN(m.cargo[node.res])+' '+RES_NAME[node.res]+' (+'+XP_GATHER+' XP)');
+      if(m.cargo && !silent){
+        const ck=Object.keys(m.cargo)[0];
+        toast('Gatherers returned: +'+fmtN(m.cargo[ck])+' '+RES_NAME[ck]+' (+'+XP_GATHER+' XP)');
+      }
       checkQuests();
     }
   }
@@ -5192,6 +5381,11 @@ function openComposer(id){
 function renderComposer(){
   const d=UI.draft; if(!d) return;
   const n=NODE_BY_ID[d.nodeId];
+  if(!n){ // the site was worked out (and respawned elsewhere) while the card was open
+    UI.draft=null; closeModal(); toast('That site was exhausted — pick another.');
+    if(WMAP) selectWorldEntity(null);
+    return;
+  }
   const hname = d.hero?HEROES[d.hero].name:'';
   let secs=n.march; if(d.hero) secs=Math.round(secs*heroMarchMult(d.hero, heroLevel(d.hero)));
   let html='<h3>'+(n.kind==='gather'?'Gather at ':'March to ')+esc(n.name)+'</h3>'+
@@ -5691,6 +5885,7 @@ function tick(){
     for(let i=0;i<freports.length-1;i++) toast((freports[i].won?'Victory':'Defeat')+' at '+freports[i].nodeName);
     battleReportModal(freports[freports.length-1]);
   }
+  tickAIGatherers();             // rival kingdoms working wild nodes (Charlie 2026-09-28)
   const raidMsg=tickRaid(false);
   if(raidMsg && !raidMsg.warn) raidModal(raidMsg);
   if(S.victory && !S.victoryShown){ S.victoryShown=true; victoryModal(); save(); }
@@ -6326,6 +6521,33 @@ function drawWorld(){
       const pic=RES_PIC[n.res];
       // soft pulsing gold ring — marks the site as interactive, RoK-style affordance
       const pulse=0.30+0.18*Math.sin(now/520 + (n.wx%7));
+      if(n.wild&&n.spr){
+        /* wild node: the original painted decoration (rock pile / tree / bush) IS the
+           node — ground shadow + gold base ring so it reads tappable, medallion names
+           the resource. Same ~56px-class tap affordance as the home ring. */
+        const sim=BLD_PIC[n.spr];
+        const wbase={'bush':130,'olive':170,'cypress':150,'deco-rocks':165}[n.spr]||150;
+        const wpx=Math.max(10,wbase*(n.sprSc||1)*z);
+        c.fillStyle='rgba(0,0,0,0.22)'; c.beginPath(); c.ellipse(p.x,p.y,wpx*0.30,wpx*0.10,0,0,7); c.fill();
+        if(sim&&sim.complete&&sim.naturalWidth){
+          const hpx=wpx*sim.naturalHeight/sim.naturalWidth;
+          c.save(); c.translate(p.x,p.y); if((n.sprR||1)<0) c.scale(-1,1);
+          c.drawImage(sim,-wpx/2,-hpx,wpx,hpx); c.restore();
+        }
+        c.strokeStyle='rgba(232,200,106,'+pulse.toFixed(3)+')'; c.lineWidth=Math.max(2,1.5+z*2);
+        c.beginPath(); c.ellipse(p.x,p.y,wpx*0.55,wpx*0.20,0,0,7); c.stroke();
+        if(pic&&pic.complete&&pic.naturalWidth){
+          const pr=Math.max(10,Math.min(22,wpx*0.22)), mgx=p.x+wpx*0.42, mgy=p.y-pr*0.3;
+          c.save();
+          c.beginPath(); c.arc(mgx,mgy,pr,0,7); c.clip();
+          c.drawImage(pic,mgx-pr,mgy-pr,pr*2,pr*2);
+          c.restore();
+          c.lineWidth=Math.max(2,pr*0.12); c.strokeStyle='#6e562f';
+          c.beginPath(); c.arc(mgx,mgy,pr,0,7); c.stroke();
+          c.lineWidth=Math.max(1,pr*0.05); c.strokeStyle='rgba(232,200,106,0.95)';
+          c.beginPath(); c.arc(mgx,mgy,pr-Math.max(1.5,pr*0.12),0,7); c.stroke();
+        }
+      } else {
       c.strokeStyle='rgba(232,200,106,'+pulse.toFixed(3)+')'; c.lineWidth=Math.max(1.5,gs*0.12);
       c.beginPath(); c.arc(p.x,p.y-gs*0.4,gs*1.55,0,7); c.stroke();
       c.fillStyle='rgba(0,0,0,0.22)'; c.beginPath(); c.ellipse(p.x,p.y+gs*1.05,gs*1.15,gs*0.36,0,0,7); c.fill();
@@ -6336,9 +6558,9 @@ function drawWorld(){
         const ph=gs*3.4, pw=ph*pim.naturalWidth/pim.naturalHeight;
         c.drawImage(pim,p.x-pw/2,p.y+gs*0.5-ph,pw,ph);
       }
+      const pr=gs*1.05, mgx=p.x+gs*1.55, mgy=p.y+gs*1.25;
       if(pic&&pic.complete&&pic.naturalWidth){
         // resource medallion badge, offset lower-right so the painted prop stays the hero
-        const pr=gs*1.05, mgx=p.x+gs*1.55, mgy=p.y+gs*1.25;
         c.save();
         c.beginPath(); c.arc(mgx,mgy,pr,0,7); c.clip();
         c.drawImage(pic,mgx-pr,mgy-pr,pr*2,pr*2);
@@ -6348,6 +6570,7 @@ function drawWorld(){
         c.lineWidth=Math.max(1,gs*0.04); c.strokeStyle='rgba(232,200,106,0.95)';
         c.beginPath(); c.arc(mgx,mgy,pr-Math.max(2,gs*0.1),0,7); c.stroke();
       } else drawResIcon(c,n.res,mgx,mgy,gs);
+      }
     }
     else if(n.kind==='camp') drawCampIcon(c,p.x,p.y,s,{});
     else if(n.kind==='ruin') drawRuinIcon(c,p.x,p.y,s,{});
@@ -6358,8 +6581,9 @@ function drawWorld(){
       const ty=p.y-s*2.1;
       const nfs=Math.max(9,Math.min(12,10*z+3));
       // an active march owns this node visually (camp/workers/floaters) — keep its airspace clear
+      // wild nodes carry no plaque: their pulse + medallion is the tap affordance (Charlie 2026-09-28)
       const hasMarch=S.marches.some(mm=>mm.nodeId===n.id);
-      const nplq=hasMarch?null:drawPlaque(c,p.x,ty,n.name,{fs:nfs});
+      const nplq=(hasMarch||n.wild)?null:drawPlaque(c,p.x,ty,n.name,{fs:nfs});
       if(n.tier&&nplq){
         const bw2=Math.max(7,Math.min(11,8*z+2)); // badge hangs below the plaque with a real gap
         drawLevelBadge(c,p.x,ty+nplq.h/2+bw2*1.12+6,n.tier,bw2);
@@ -6471,6 +6695,7 @@ function drawWorld(){
   drawFieldMarches(c,now);
   drawMusterPreview(c,now);
   drawAIMarches(c);
+  drawAIGatherers(c,now);
   drawOutposts(c);
   drawRallies(c,now);
   drawPulses(c,now);
