@@ -582,6 +582,11 @@ const NODES = [
   {id:'grove',   name:'Timber Grove',   kind:'gather', res:'wood',  x:80, y:16, march:35, flavor:'Ancient cedars, tall enough to embarrass the gods.'},
   {id:'marble',  name:'Marble Quarry',  kind:'gather', res:'stone', x:84, y:44, march:40, flavor:'White stone sleeps in the hill, waiting for walls.'},
   {id:'goldmine',name:'Gold Mine',      kind:'gather', res:'gold',  x:70, y:72, march:50, flavor:'A vein of sun-gold glints in the torchlight.'},
+  /* Home gather ring (2026-09-28): one-tap food/wood/stone just outside Troy,
+     ~350u out so all three sit comfortably inside the default map view. */
+  {id:'hfood', name:'Sunlit Wheatfield', kind:'gather', res:'food',  x:47.08, y:50,   march:30, flavor:'Golden wheat ripens a bowshot from Troy\u2019s gate.'},
+  {id:'hwood', name:'Old Cedar Copse',   kind:'gather', res:'wood',  x:52.92, y:50,   march:30, flavor:'Tall cedars stand east of the walls, free for the cutting.'},
+  {id:'hstone',name:'Limestone Rise',    kind:'gather', res:'stone', x:50, y:47.08, march:30, flavor:'Pale stone breaks the turf north of Troy \u2014 ready for walls.'},
   {id:'camp1', name:'Jackal Scouts', kind:'camp', tier:1, x:36, y:36, march:30,
     garrison:{spearman:4}, loot:{food:120, wood:80, gold:30},
     flavor:'Mangy outriders sniffing around Trojan land.'},
@@ -818,6 +823,31 @@ function ensureWorld(){
   for(const n of NODES){ if(n.wx===undefined){ n.wx=n.x/100*WORLD; n.wy=n.y/100*WORLD; } }
   // painted map detail scatter (pass 2): crisp sprite dressing over the terrain
   if(!W.details){ W.details=genDetails(W); save(); }
+  /* HOME-GATHER migration (2026-09-28): three gather sites now ring the capital
+     (Sunlit Wheatfield, Old Cedar Copse, Limestone Rise) so stone/food/wood are
+     one tap from Troy; and stone-looking dressing near Troy is removed because
+     it read as a tappable node without being one. Runs once per world. */
+  if(!W.homeGatherFixed){
+    W.homeGatherFixed=true;
+    if(W.details) W.details=W.details.filter(d=>{
+      if(d.k!=='deco-ruin'&&d.k!=='deco-rocks') return true;
+      return Math.hypot(d.x-WORLD_CX,d.y-WORLD_CY)>=1150;
+    });
+    /* tight, outward-biased dressing grounds each home site (never stone-like) */
+    const hrnd=mulberry32(WORLD_SEED+78);
+    const hdress=[['hfood',['bush','bush','olive']],['hwood',['olive','cypress','bush']],['hstone',['bush','cypress','bush']]];
+    for(const hd of hdress){
+      const hn=NODE_BY_ID[hd[0]];
+      if(!hn||hn.wx===undefined) continue;
+      const away=Math.atan2(hn.wy-WORLD_CY,hn.wx-WORLD_CX);
+      for(const dk of hd[1]){
+        const da=away+(hrnd()-0.5)*1.6, dd=300+hrnd()*180;
+        W.details.push({x:Math.round(hn.wx+Math.cos(da)*dd),y:Math.round(hn.wy+Math.sin(da)*dd),
+          k:dk,sc:0.9+hrnd()*0.6,r:hrnd()<0.5?-1:1});
+      }
+    }
+    save();
+  }
   // register AI kingdoms + seeded extra nodes exactly once per page load
   if(!WORLD_REG){
     WORLD_REG=true;
@@ -2774,7 +2804,11 @@ function genDetails(W){
   while(out.length<150&&guard++<25000){
     const x=700+rnd()*(WORLD-1400), y=700+rnd()*(WORLD-1400);
     if(!clear(x,y)) continue;
-    out.push({x:Math.round(x),y:Math.round(y),k:pick(),sc:0.8+rnd()*0.7,r:rnd()<0.5?-1:1});
+    const kk=pick();
+    /* stone-looking dressing must never impersonate a gather node near Troy:
+       ruins and rock piles stay at least 1150u from the capital. */
+    if((kk==='deco-ruin'||kk==='deco-rocks')&&Math.hypot(x-WORLD_CX,y-WORLD_CY)<1150) continue;
+    out.push({x:Math.round(x),y:Math.round(y),k:kk,sc:0.8+rnd()*0.7,r:rnd()<0.5?-1:1});
   }
   // micro-biomes ringing the four gather nodes: each node sits in its own little world
   const biome={fields:['bush','bush','olive'],grove:['olive','olive','cypress'],marble:['deco-rocks','deco-rocks','bush'],goldmine:['deco-rocks','deco-ruin','bush']};
