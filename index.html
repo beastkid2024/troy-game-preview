@@ -1375,6 +1375,11 @@ function renderMap(){
     initWorldMap();
   }
   updateWorldFeed();
+  // live-refresh the open bottom sheet (gather progress, countdowns) once per tick
+  if(WMAP.sel && $('#wm-sheet') && $('#wm-sheet').classList.contains('open')){
+    const sh=sheetHTML(WMAP.sel);
+    if(sh) $('#wm-sheet').innerHTML=sh; else $('#wm-sheet').classList.remove('open');
+  }
   drawWorld();
 }
 function initWorldMap(){
@@ -1492,30 +1497,107 @@ function drawAIMarches(c){
     }
   }
 }
-/* Player march lines + moving war-band dot */
+/* Player march lines + marching war-band / gather camp (RoK-style gathering visuals) */
+function drawWarBand(c,x,y,ang,cargo,now){
+  c.save(); c.translate(x,y); c.rotate(ang);
+  c.fillStyle='rgba(0,0,0,0.25)'; c.beginPath(); c.ellipse(0,2.5,10,3.6,0,0,7); c.fill();
+  // war banner on a pole, fluttering
+  c.strokeStyle='#5e3a1a'; c.lineWidth=2;
+  c.beginPath(); c.moveTo(-7,-2); c.lineTo(-7,-17); c.stroke();
+  const wv=Math.sin(now/260)*1.8;
+  c.fillStyle='#7a1f1f';
+  c.beginPath(); c.moveTo(-7,-17); c.lineTo(2,-15.5+wv); c.lineTo(-1,-13.6+wv*0.5);
+  c.lineTo(2,-11.8); c.lineTo(-7,-10.2); c.closePath(); c.fill();
+  c.fillStyle='#e8c86a'; c.fillRect(-7,-17,1.6,1.6);
+  // three spearmen in a wedge, facing +x, bobbing as they march
+  const bob=Math.sin(now/170)*0.9;
+  const men=[[-3,-4.5],[-3,4.5],[3.5,0]];
+  for(let i=0;i<men.length;i++){
+    const mx=men[i][0], my=men[i][1]+((i%2)?bob:-bob)*0.5;
+    // spear angled forward
+    c.strokeStyle='#8a6a3a'; c.lineWidth=1.5;
+    c.beginPath(); c.moveTo(mx+2,my-7); c.lineTo(mx+6.5,my+2.5); c.stroke();
+    c.fillStyle='#d8d8d8'; c.beginPath(); c.arc(mx+1.7,my-7.6,1.1,0,7); c.fill();
+    // bronze cuirass body
+    c.fillStyle='#b08d4f'; c.beginPath(); c.arc(mx,my,2.7,0,7); c.fill();
+    c.strokeStyle='#6e4a22'; c.lineWidth=0.8; c.beginPath(); c.arc(mx,my,2.7,0,7); c.stroke();
+    // helmet with red crest
+    c.fillStyle='#8a6a2a'; c.beginPath(); c.arc(mx,my-1.2,2.2,Math.PI,0); c.fill();
+    c.fillStyle='#a32e2e'; c.fillRect(mx-0.8,my-5.2,1.6,2.8);
+    // round shield
+    c.fillStyle='#7a1f1f'; c.beginPath(); c.arc(mx-2.6,my+0.8,2.1,0,7); c.fill();
+    c.strokeStyle='#d8b25e'; c.lineWidth=0.8; c.beginPath(); c.arc(mx-2.6,my+0.8,2.1,0,7); c.stroke();
+  }
+  if(cargo){
+    // grain sack on the lead bearer's back
+    c.fillStyle='#c9a86a'; c.beginPath(); c.ellipse(6.5,-2,3.2,3.8,0.35,0,7); c.fill();
+    c.strokeStyle='#7a5a22'; c.lineWidth=1; c.beginPath(); c.ellipse(6.5,-2,3.2,3.8,0.35,0,7); c.stroke();
+    c.strokeStyle='#7a5a22'; c.beginPath(); c.moveTo(4,-4.4); c.lineTo(9,-0.6); c.stroke();
+  }
+  c.restore();
+}
+/* Gather camp deployed at the node while troops work it: tent, banner, barrels,
+   circular progress ring + countdown. */
+function drawGatherCamp(c,bx,by,prog,secsLeft,now){
+  c.fillStyle='rgba(0,0,0,0.25)'; c.beginPath(); c.ellipse(bx,by+11,22,7.5,0,0,7); c.fill();
+  // barrels
+  for(const ox of [-21,21]){
+    c.fillStyle='#8a6a3a'; c.beginPath(); c.ellipse(bx+ox,by+8,4.2,5.2,0,0,7); c.fill();
+    c.strokeStyle='#4a2e12'; c.lineWidth=1;
+    c.beginPath(); c.moveTo(bx+ox-4.2,by+6); c.lineTo(bx+ox+4.2,by+6);
+    c.moveTo(bx+ox-4.2,by+10); c.lineTo(bx+ox+4.2,by+10); c.stroke();
+  }
+  // tent: sunlit + shaded faces
+  c.fillStyle='#c9a86a';
+  c.beginPath(); c.moveTo(bx-14,by+8); c.lineTo(bx,by-12); c.lineTo(bx+14,by+8); c.closePath(); c.fill();
+  c.fillStyle='#a8843e';
+  c.beginPath(); c.moveTo(bx,by-12); c.lineTo(bx+14,by+8); c.lineTo(bx+3.5,by+8); c.closePath(); c.fill();
+  c.strokeStyle='#5e3a1a'; c.lineWidth=1.5;
+  c.beginPath(); c.moveTo(bx-14,by+8); c.lineTo(bx,by-12); c.lineTo(bx+14,by+8); c.stroke();
+  // ridge pole with fluttering pennant
+  c.strokeStyle='#5e3a1a'; c.lineWidth=2;
+  c.beginPath(); c.moveTo(bx,by-12); c.lineTo(bx,by-25); c.stroke();
+  const wv=Math.sin(now/280)*2;
+  c.fillStyle='#7a1f1f';
+  c.beginPath(); c.moveTo(bx,by-25); c.lineTo(bx+10,by-23+wv); c.lineTo(bx,by-20); c.closePath(); c.fill();
+  // progress ring
+  const pr=26;
+  c.strokeStyle='rgba(0,0,0,0.35)'; c.lineWidth=5;
+  c.beginPath(); c.arc(bx,by-2,pr,0,7); c.stroke();
+  c.strokeStyle='#7fd47f'; c.lineWidth=5; c.lineCap='round';
+  c.beginPath(); c.arc(bx,by-2,pr,-Math.PI/2,-Math.PI/2+Math.max(0,Math.min(1,prog))*Math.PI*2); c.stroke();
+  c.lineCap='butt';
+  // countdown plaque below the camp (keeps clear of the node's name label)
+  drawPlaque(c,bx,by+40,fmtT(secsLeft),{fs:11});
+}
 function drawMarches(c,now){
   for(const m of S.marches){
     const n=NODE_BY_ID[m.nodeId]; if(!n||n.wx===undefined) continue;
     const a=w2s(WORLD_CX,WORLD_CY), b=w2s(n.wx,n.wy);
-    c.strokeStyle='rgba(232,200,106,0.55)'; c.lineWidth=2; c.setLineDash([7,6]);
-    c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke(); c.setLineDash([]);
-    let t=0.5;
-    if(m.phase==='out') t=1-Math.max(0,(m.arriveAt-now)/(m.marchSecs*1000));
-    else if(m.phase==='back') t=Math.max(0,(m.returnAt-now)/(m.marchSecs*1000));
-    t=Math.max(0,Math.min(1,t));
-    const x=a.x+(b.x-a.x)*t, y=a.y+(b.y-a.y)*t;
-    // distance label at the path midpoint, RoK-style
-    const km=Math.max(1,Math.round(Math.hypot(n.wx-WORLD_CX,n.wy-WORLD_CY)/600));
-    drawPlaque(c,(a.x+b.x)/2,(a.y+b.y)/2-16,km+' KM',{fs:10});
-    // glowing objective ring at the target
+    // glowing objective ring at the target (all phases)
     const pr=13+Math.sin(now/300)*3;
     c.strokeStyle='rgba(232,200,106,0.9)'; c.lineWidth=3;
     c.beginPath(); c.arc(b.x,b.y,pr,0,7); c.stroke();
     c.strokeStyle='rgba(232,200,106,0.35)'; c.lineWidth=7;
     c.beginPath(); c.arc(b.x,b.y,pr,0,7); c.stroke();
-    c.fillStyle='#e8c86a'; c.beginPath(); c.arc(x,y,5,0,7); c.fill();
-    c.strokeStyle='#5e3a1a'; c.lineWidth=2; c.beginPath(); c.arc(x,y,5,0,7); c.stroke();
-    c.fillStyle='#7a1f1f'; c.beginPath(); c.arc(x,y,2,0,7); c.fill();
+    const km=Math.max(1,Math.round(Math.hypot(n.wx-WORLD_CX,n.wy-WORLD_CY)/600));
+    if(m.phase==='gather'){
+      // troops are on site: draw the camp with live progress, no march line
+      const total=GATHER_TIME*gatherTimeMult(m.hero)*1000;
+      const left=Math.max(0,m.gatherAt-now);
+      drawGatherCamp(c,b.x,b.y-6,1-left/total,left/1000,now);
+      continue;
+    }
+    let t=0.5, ang=0;
+    if(m.phase==='out'){ t=1-Math.max(0,(m.arriveAt-now)/(m.marchSecs*1000)); ang=Math.atan2(b.y-a.y,b.x-a.x); }
+    else if(m.phase==='back'){ t=Math.max(0,(m.returnAt-now)/(m.marchSecs*1000)); ang=Math.atan2(a.y-b.y,a.x-b.x); }
+    t=Math.max(0,Math.min(1,t));
+    c.strokeStyle='rgba(232,200,106,0.55)'; c.lineWidth=2; c.setLineDash([7,6]);
+    c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke(); c.setLineDash([]);
+    // distance label at the path midpoint, RoK-style
+    drawPlaque(c,(a.x+b.x)/2,(a.y+b.y)/2-16,km+' KM',{fs:10});
+    const x=a.x+(b.x-a.x)*t, y=a.y+(b.y-a.y)*t;
+    drawWarBand(c,x,y,ang,m.phase==='back',now);
   }
 }
 function drawWorld(){
@@ -1701,10 +1783,8 @@ function updateWorldFeed(){
 }
 /* Bottom-sheet panel for the tapped entity. Buttons wire to existing
    Game functions: openComposer (march/gather), sendScout (25 gold). */
-function selectWorldEntity(id){
-  WMAP.sel=id;
-  const el=$('#wm-sheet');
-  if(!id){ el.classList.remove('open'); el.innerHTML=''; drawWorld(); return; }
+function sheetHTML(id){
+  if(!id) return '';
   let html='';
   if(id==='player'){
     html='<h3>'+esc(S.kingdomName||'Troy')+' <span class="small">· your capital</span></h3>'+
@@ -1712,7 +1792,7 @@ function selectWorldEntity(id){
       '<div class="wm-actions"><button class="btn small" onclick="Game.tab(\'city\')">Manage City</button></div>';
   } else if(id.startsWith('op:')){
     const o=(S.outposts||[]).find(o=>'op:'+o.id===id);
-    if(!o){ el.classList.remove('open'); return; }
+    if(!o) return '';
     html='<h3>\u2691 '+esc(o.name)+'</h3>'+
       '<div class="small">Your territory · X:'+o.wx+' Y:'+o.wy+'</div>'+
       '<div class="small" style="margin:4px 0">Each outpost: <b>+3% production</b> · <b>\u00d71.25 gathering</b> inside your borders.</div>'+
@@ -1720,7 +1800,7 @@ function selectWorldEntity(id){
       '<button class="btn ghost small" onclick="Game.wmCloseSheet()">Close</button></div>';
   } else if(id.startsWith('rally:')){
     const r=(S.rallies||[]).find(r=>'rally:'+r.id===id);
-    if(!r){ el.classList.remove('open'); return; }
+    if(!r) return '';
     const n=NODE_BY_ID[r.nodeId];
     html='<h3>\u2691 War Standard</h3>'+
       '<div class="small">Rally on <b>'+esc(n?n.name:'')+'</b> (X:'+(n?n.wx:'')+' Y:'+(n?n.wy:'')+')</div>'+
@@ -1733,7 +1813,7 @@ function selectWorldEntity(id){
       '<div class="small">An alliance war host is mustering. Their standard flies — then they march.</div>'+
       '<div class="wm-actions"><button class="btn ghost small" onclick="Game.wmCloseSheet()">Close</button></div>';
   } else {
-    const n=NODE_BY_ID[id]; if(!n){ el.classList.remove('open'); return; }
+    const n=NODE_BY_ID[id]; if(!n) return '';
     const rec=S.nodes[id]||{};
     const cleared=!!rec.cleared;
     const march=S.marches.find(x=>x.nodeId===id);
@@ -1754,7 +1834,16 @@ function selectWorldEntity(id){
     }
     let btns='';
     if(march){
-      btns='<div class="small">March en route — '+(march.phase==='out'?'arrives':'returning')+'.</div>';
+      if(march.phase==='gather'&&n.kind==='gather'){
+        const total=GATHER_TIME*gatherTimeMult(march.hero)*1000;
+        const left=Math.max(0,march.gatherAt-nowMs());
+        const pct=Math.min(100,Math.round(100*(1-left/total)));
+        btns='<div class="small" style="margin:4px 0;flex:1 1 100%">Gathering '+RES_NAME[n.res]+'\u2026</div>'+
+          '<div class="xpbar" style="flex:1 1 100%"><div style="width:'+pct+'%"></div></div>'+
+          '<div class="small" style="flex:1 1 100%">'+pct+'% \u00b7 '+fmtT(left/1000)+' left</div>';
+      } else {
+        btns='<div class="small">March en route — '+(march.phase==='out'?'arrives':'returning')+'.</div>';
+      }
     } else if(cleared){
       btns='<div class="small" style="color:#9ab86a">Conquered.</div>';
     } else if(n.kind==='gather'){
@@ -1772,6 +1861,16 @@ function selectWorldEntity(id){
     html='<h3>'+esc(title)+'</h3><div class="small">'+esc(sub)+'</div>'+gstr+
       '<div class="wm-actions">'+btns+'<button class="btn ghost small" onclick="Game.wmCloseSheet()">Close</button></div>';
   }
+  return html;
+}
+/* Bottom-sheet panel for the tapped entity. Buttons wire to existing
+   Game functions: openComposer (march/gather), sendScout (25 gold). */
+function selectWorldEntity(id){
+  WMAP.sel=id;
+  const el=$('#wm-sheet');
+  if(!id){ el.classList.remove('open'); el.innerHTML=''; drawWorld(); return; }
+  const html=sheetHTML(id);
+  if(!html){ el.classList.remove('open'); return; }
   el.innerHTML=html; el.classList.add('open');
   // keep the freshly opened sheet fully visible above the fixed tab bar
   requestAnimationFrame(()=>{ const v=$('#views'); if(v) v.scrollTop=v.scrollHeight; });
@@ -2796,6 +2895,7 @@ function tickMarches(silent){
     if(m.phase==='out' && nowMs()>=m.arriveAt){
       if(node.kind==='gather'){
         m.phase='gather'; m.gatherAt = nowMs()+GATHER_TIME*gatherTimeMult(m.hero)*1000;
+        if(!silent) toast('\u26fa Gatherers arrived at '+esc(node.name)+' — collecting '+RES_NAME[node.res]+'\u2026');
       } else {
         const res = resolveAttackMarch(m, silent);
         reports.push(res);
@@ -3979,10 +4079,22 @@ function openNode(id){
   const n=NODE_BY_ID[id], cleared=S.nodes[id]&&S.nodes[id].cleared;
   let body='';
   if(n.kind==='gather'){
+    const gm=S.marches.find(x=>x.nodeId===id);
     body='<div class="flavor">'+esc(n.flavor)+'</div>'+
       '<div class="small">Send troops to gather <b>'+RES_NAME[n.res]+'</b>: +'+GATHER_YIELD+' per troop per trip.<br>'+
-      'Time on site: '+GATHER_TIME+'s · march '+fmtT(n.march)+' each way.</div><br>'+
-      '<button class="btn" onclick="Game.openComposer(\''+id+'\')">Send Gatherers</button>';
+      'Time on site: '+GATHER_TIME+'s · march '+fmtT(n.march)+' each way.</div><br>';
+    if(gm&&gm.phase==='gather'){
+      const total=GATHER_TIME*gatherTimeMult(gm.hero)*1000;
+      const left=Math.max(0,gm.gatherAt-nowMs());
+      const pct=Math.min(100,Math.round(100*(1-left/total)));
+      body+='<div class="small" style="margin:4px 0">Your gatherers are on site…</div>'+
+        '<div class="xpbar"><div style="width:'+pct+'%"></div></div>'+
+        '<div class="small">'+pct+'% · '+fmtT(left/1000)+' left</div><br>';
+    } else if(!gm){
+      body+='<button class="btn" onclick="Game.openComposer(\''+id+'\')">Send Gatherers</button>';
+    } else {
+      body+='<div class="small">Gatherers '+(gm.phase==='out'?'marching to the site…':'returning home…')+'</div><br>';
+    }
   } else {
     const g=n.garrison;
     const rec=S.nodes[id]||{};
@@ -4016,7 +4128,7 @@ function renderComposer(){
   const n=NODE_BY_ID[d.nodeId];
   const hname = d.hero?HEROES[d.hero].name:'';
   let secs=n.march; if(d.hero) secs=Math.round(secs*heroMarchMult(d.hero, heroLevel(d.hero)));
-  let html='<h3>March to '+esc(n.name)+'</h3>'+
+  let html='<h3>'+(n.kind==='gather'?'Gather at ':'March to ')+esc(n.name)+'</h3>'+
     '<div class="small">March '+fmtT(secs)+' each way'+(d.hero&&heroMarchMult(d.hero,heroLevel(d.hero))<1?' ('+esc(HEROES[d.hero].abilities[0].name)+')':'')+'. Max 2 marches at once.</div><hr class="bronze">';
   for(const t of TROOP_ORDER){
     const av=troopCount(t);
