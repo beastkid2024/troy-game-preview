@@ -498,7 +498,9 @@ const ICONS = {
   trowel:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 15l6-6 4 4-6 6z"/><path d="M9 15l-5 5"/><path d="M15 9l5-5"/></svg>',
   whet:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="9" width="18" height="7" rx="2"/><path d="M8 9V6M16 9V6M8 16v3M16 16v3"/></svg>',
   ledger:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>',
-  helm:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 20v-6a6 6 0 0 1 12 0v6"/><path d="M12 8V4"/><path d="M4 20h16"/><path d="M9 12h.5M14.5 12H15"/></svg>'
+  helm:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 20v-6a6 6 0 0 1 12 0v6"/><path d="M12 8V4"/><path d="M4 20h16"/><path d="M9 12h.5M14.5 12H15"/></svg>',
+  fleece:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18c-2-1-3-3-2-5 1-3 4-4 7-4 4 0 7 2 7 6 0 3-2 5-5 5"/><path d="M7 18c1 2 3 3 6 3"/><path d="M5 8c2-2 5-3 8-3"/></svg>',
+  compass:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M15 9l-2 5-4 1 2-5z"/></svg>'
 };
 function icon(n){ return '<span class="ic">'+ICONS[n]+'</span>'; }
 
@@ -958,6 +960,8 @@ function ensureWorld(){
   if(!W.sieges) W.sieges={};
   if(!W.intentions) W.intentions=[];
   if(!W.pulses) W.pulses=[];
+  // PIRATE migration (2026-09-28): scatter level 1-25 pirate crews. Runs once per world.
+  ensurePirates();
   // world coords for hand-authored nodes
   for(const n of NODES){ if(n.wx===undefined){ n.wx=n.x/100*WORLD; n.wy=n.y/100*WORLD; } }
   // painted map detail scatter (pass 2): crisp sprite dressing over the terrain
@@ -1014,6 +1018,9 @@ function ensureWorld(){
       if(!NODE_BY_ID[k.id]){ const n=akNodeFor(k); NODES.push(n); NODE_BY_ID[k.id]=n; }
     }
     for(const n of (W.extra||[])){
+      if(!NODE_BY_ID[n.id]){ n.x=n.wx/WORLD*100; n.y=n.wy/WORLD*100; NODES.push(n); NODE_BY_ID[n.id]=n; }
+    }
+    for(const n of (W.pirates||[])){
       if(!NODE_BY_ID[n.id]){ n.x=n.wx/WORLD*100; n.y=n.wy/WORLD*100; NODES.push(n); NODE_BY_ID[n.id]=n; }
     }
   } else {
@@ -1578,6 +1585,54 @@ function drawCampIcon(c,x,y,s,o){
   c.fillStyle=BRONZE_D; c.beginPath(); c.arc(x+s*0.95,y+s*0.55,s*0.24,0,7); c.fill();
   c.fillStyle=GOLD; c.beginPath(); c.arc(x+s*0.95,y+s*0.55,s*0.09,0,7); c.fill();
 }
+/* Pirate crew icon (Charlie 2026-09-28): original black-sail galley on dark water.
+   Distinct from camps/ruins/bosses at a glance. */
+function drawPirateIcon(c,x,y,s,o){
+  o=o||{};
+  // dark water ring
+  c.fillStyle='rgba(20,40,60,0.55)';
+  c.beginPath(); c.ellipse(x,y+s*0.72,s*1.25,s*0.42,0,0,7); c.fill();
+  c.strokeStyle='rgba(140,180,210,0.5)'; c.lineWidth=Math.max(1,s*0.07);
+  c.beginPath(); c.ellipse(x,y+s*0.72,s*1.25,s*0.42,0,0,7); c.stroke();
+  // hull: dark curved warship body
+  c.fillStyle='#241a10';
+  c.beginPath();
+  c.moveTo(x-s*1.1,y+s*0.35);
+  c.quadraticCurveTo(x,y+s*0.95,x+s*1.1,y+s*0.35);
+  c.lineTo(x+s*0.85,y+s*0.15); c.lineTo(x-s*0.85,y+s*0.15);
+  c.closePath(); c.fill();
+  c.strokeStyle='#0d0906'; c.lineWidth=Math.max(1,s*0.08); c.stroke();
+  // bronze ram at the prow
+  c.fillStyle=BRONZE;
+  c.beginPath(); c.moveTo(x+s*0.85,y+s*0.25); c.lineTo(x+s*1.2,y+s*0.12); c.lineTo(x+s*0.85,y+s*0.02); c.closePath(); c.fill();
+  // mast
+  c.strokeStyle='#4a341c'; c.lineWidth=Math.max(2,s*0.14); c.lineCap='round';
+  c.beginPath(); c.moveTo(x,y+s*0.2); c.lineTo(x,y-s*1.35); c.stroke();
+  // yard
+  c.lineWidth=Math.max(1.5,s*0.1);
+  c.beginPath(); c.moveTo(x-s*0.95,y-s*1.15); c.lineTo(x+s*0.95,y-s*1.15); c.stroke();
+  // black square sail with skull emblem
+  c.fillStyle='#14100c';
+  c.beginPath(); c.moveTo(x-s*0.95,y-s*1.15); c.lineTo(x+s*0.95,y-s*1.15);
+  c.quadraticCurveTo(x+s*0.7,y-s*0.35,x,y-s*0.25);
+  c.quadraticCurveTo(x-s*0.7,y-s*0.35,x-s*0.95,y-s*1.15); c.closePath(); c.fill();
+  c.strokeStyle='#000'; c.lineWidth=Math.max(1,s*0.06); c.stroke();
+  // skull: bone-white circle + crossbones on the sail
+  c.fillStyle='#e8e2d2';
+  c.beginPath(); c.arc(x,y-s*0.72,s*0.22,0,7); c.fill();
+  c.fillRect(x-s*0.14,y-s*0.56,s*0.28,s*0.12);
+  c.strokeStyle='#e8e2d2'; c.lineWidth=Math.max(1,s*0.06);
+  c.beginPath(); c.moveTo(x-s*0.3,y-s*0.86); c.lineTo(x+s*0.3,y-s*0.6); c.stroke();
+  c.beginPath(); c.moveTo(x+s*0.3,y-s*0.86); c.lineTo(x-s*0.3,y-s*0.6); c.stroke();
+  // red pennant
+  c.fillStyle='#a02323';
+  c.beginPath(); c.moveTo(x,y-s*1.35); c.lineTo(x+s*0.45,y-s*1.22); c.lineTo(x,y-s*1.09); c.closePath(); c.fill();
+  // oars
+  c.strokeStyle='#5a4020'; c.lineWidth=Math.max(1.5,s*0.11);
+  for(const sd of [-1,1]){
+    c.beginPath(); c.moveTo(x+sd*s*0.5,y+s*0.45); c.lineTo(x+sd*s*1.25,y+s*0.85); c.stroke();
+  }
+}
 /* Carved plaque banner: dark leather plaque, bronze border, aged-gold text */
 function drawPlaque(c,x,y,text,o){
   o=o||{};
@@ -1704,6 +1759,7 @@ function renderMap(){
       '<span class="wm-res"><img class="wm-ric" data-res="wood" src="'+RES_IMG['wood']+'"><b id="wm-r-wood"></b></span>'+
       '<span class="wm-res"><img class="wm-ric" data-res="stone" src="'+RES_IMG['stone']+'"><b id="wm-r-stone"></b></span>'+
       '<span class="wm-res"><img class="wm-ric" data-res="gold" src="'+RES_IMG['gold']+'"><b id="wm-r-gold"></b></span>'+
+      '<span class="wm-res" title="Gems — won from pirates"><span class="wm-ric" style="display:inline-flex;align-items:center;justify-content:center;font-size:20px;color:#9fd8e8;text-shadow:0 1px 2px #000">◆</span><b id="wm-r-gems"></b></span>'+
       '<span class="wm-glory" id="wm-glory"></span><span class="wm-pow" id="wm-pow"></span><span class="wm-coords" id="wm-coords"></span></div>'+
       '<canvas id="worldmap"></canvas>'+
       '<div id="march-queue"></div>'+
@@ -2242,6 +2298,7 @@ function drawWorld(){
         c.beginPath(); c.arc(p.x,p.y,pr-Math.max(2,gs*0.12),0,7); c.stroke();
       } else drawResIcon(c,n.res,p.x,p.y,gs);
     }
+    else if(n.kind==='pirate') drawPirateIcon(c,p.x,p.y,s,{});
     else if(n.kind==='camp') drawCampIcon(c,p.x,p.y,s,{});
     else if(n.kind==='ruin') drawRuinIcon(c,p.x,p.y,s,{});
     else if(n.kind==='boss'){ drawCityIcon(c,p.x,p.y,s*1.15,{dark:true}); }
@@ -2253,9 +2310,9 @@ function drawWorld(){
       // an active march owns this node visually (camp/workers/floaters) — keep its airspace clear
       const hasMarch=S.marches.some(mm=>mm.nodeId===n.id);
       const nplq=(hasMarch||n.wild)?null:drawPlaque(c,p.x,ty,n.name,{fs:nfs});
-      if(n.tier&&nplq){
+      if((n.tier||n.kind==='pirate')&&nplq){
         const bw2=Math.max(7,Math.min(11,8*z+2)); // badge hangs below the plaque with a real gap
-        drawLevelBadge(c,p.x,ty+nplq.h/2+bw2*1.12+6,n.tier,bw2);
+        drawLevelBadge(c,p.x,ty+nplq.h/2+bw2*1.12+6,(n.tier||n.lvl),bw2);
       }
     }
     // battle scars on attacked (not yet cleared) nodes: smoke -> fire -> burning
@@ -2379,10 +2436,196 @@ function updateWorldFeed(){
   const set=(id,v)=>{ const e=$(id); if(e) e.textContent=v; };
   set('#wm-r-food', fmtN(S.res.food)); set('#wm-r-wood', fmtN(S.res.wood));
   set('#wm-r-stone', fmtN(S.res.stone)); set('#wm-r-gold', fmtN(S.res.gold));
+  set('#wm-r-gems', fmtN(S.gems||0));
   const pw=armyPower();
   const pe=$('#wm-pow');
   if(pe){ if(pw>0){ pe.style.display=''; set('#wm-pow','Power '+fmtN(pw)); } else pe.style.display='none'; }
   set('#wm-glory','❖ '+fmtN(S.glory||0));
+}
+/* ---------------- pirates (Charlie 2026-09-28) ----------------
+   Sea-robbers with black sails scattered across the map, level 1–25.
+   Attacking them reuses the existing march / visible-clash / battle-engine /
+   return / report systems. Victory pays a random resource haul plus pirate
+   loot: gems, treasure-chest jackpots, relics, speed-ups, treasure maps,
+   and a captured crew the player may press into service or ransom.
+   Defeated crews despawn and a new crew sails in elsewhere after a delay.
+   All pirate state lives under S.world so it persists across save/load. */
+const PIRATE_NAMES=['Black Sail Corsairs','Scylla\u2019s Brood','Siren Coast Reavers','Aegean Sea-Wolves','The Drowned Oars','Charybdis Raiders','Salt Crows','Cyclops\u2019 Kin','Harpy\u2019s Talons','The Broken Mast','Keres of the Deep','Myrmidon Deserters'];
+const PIRATE_MAX=25;
+function pirateGarrison(lvl){
+  // scales from an easy skirmish (Lv 1, beatable by the starter war-band)
+  // to an endgame armada (Lv 25)
+  return {
+    spearman: Math.round(2+lvl*2.6),
+    archer:   Math.round(1+lvl*2.2),
+    cavalry:  Math.round(lvl*1.6)
+  };
+}
+function pirateMarchSecs(wx,wy){ return Math.round(30+Math.hypot(wx-WORLD_CX,wy-WORLD_CY)/WORLD*150); }
+function piratePower(lvl){ return armyPower(pirateGarrison(lvl)); }
+function makePirate(lvl, wx, wy){
+  const W=S.world; W.pirateSeq=(W.pirateSeq||0)+1;
+  return { id:'p'+W.pirateSeq, kind:'pirate', pirate:true, lvl:lvl,
+    name:PIRATE_NAMES[(Math.random()*PIRATE_NAMES.length)|0],
+    wx:wx, wy:wy, x:wx/WORLD*100, y:wy/WORLD*100,
+    march:pirateMarchSecs(wx,wy), garrison:pirateGarrison(lvl),
+    flavor:'Sea-robbers with black sails. Their hold is fat with plunder.' };
+}
+function registerPirate(n){ if(!NODE_BY_ID[n.id]){ NODES.push(n); NODE_BY_ID[n.id]=n; } }
+function unregisterPirate(id){
+  delete NODE_BY_ID[id];
+  const i=NODES.findIndex(n=>n.id===id);
+  if(i>=0) NODES.splice(i,1);
+}
+function pirateLevelFor(dist){
+  // farther from Troy = harder: level 1 in home waters, 25 at the far corners
+  const maxD=Math.hypot(WORLD,WORLD)/2;
+  const f=Math.min(1,dist/maxD);
+  return Math.max(1, Math.min(PIRATE_MAX, Math.round(1+Math.pow(f,1.35)*24+(Math.random()*2-1))));
+}
+function pirateSpot(){
+  for(let i=0;i<60;i++){
+    const x=Math.random()*WORLD, y=Math.random()*WORLD;
+    const dTroy=Math.hypot(x-WORLD_CX,y-WORLD_CY);
+    if(dTroy<900) continue;
+    let ok=true;
+    for(const o of NODES){
+      const ox=(o.wx!==undefined?o.wx:o.x/100*WORLD), oy=(o.wy!==undefined?o.wy:o.y/100*WORLD);
+      if(Math.hypot(ox-x,oy-y)<(o.kind==='pirate'?700:420)){ ok=false; break; }
+    }
+    if(ok) return {x:x,y:y};
+  }
+  return null;
+}
+function seedPirates(){
+  const W=S.world; W.pirates=[]; W.pirateSeq=0;
+  const spots=[];
+  for(let i=0;i<8;i++){ const sp=pirateSpot(); if(sp) spots.push(sp); }
+  spots.sort((a,b)=>Math.hypot(a.x-WORLD_CX,a.y-WORLD_CY)-Math.hypot(b.x-WORLD_CX,b.y-WORLD_CY));
+  spots.forEach((sp,i)=>{
+    const dist=Math.hypot(sp.x-WORLD_CX,sp.y-WORLD_CY);
+    let lvl=pirateLevelFor(dist);
+    // guarantee the full range: an easy level-1 crew near home waters, an endgame crew far out
+    if(i===0) lvl=1;
+    if(i===spots.length-1) lvl=25;
+    const p=makePirate(lvl,sp.x,sp.y);
+    W.pirates.push(p); registerPirate(p);
+  });
+}
+function ensurePirates(){
+  const W=S.world; if(!W) return;
+  if(W.piratesDone) return;
+  if(!W.pirates||W.pirates.length===0) seedPirates();
+  W.piratesDone=true; save();
+}
+function pirateDefeated(id){
+  const n=NODE_BY_ID[id];
+  const name=n?n.name:'The pirate crew';
+  unregisterPirate(id);
+  const W=S.world;
+  if(W&&W.pirates){ const i=W.pirates.findIndex(p=>p.id===id); if(i>=0) W.pirates.splice(i,1); }
+  if(WMAP&&WMAP.sel===id) selectWorldEntity(null);
+  // a new crew sails in elsewhere after a delay (3–8 minutes)
+  if(W) W.pirateRespawnAt=nowMs()+(180+Math.random()*300)*1000;
+  pushFeed('\u2694 '+name+' was sunk — survivors will tell the tale. A new crew will sail in soon.');
+  toast('\u2694 '+esc(name)+' was sunk! A new crew will sail in soon.');
+  save(); if(WMAP) drawWorld();
+}
+function tickPirates(){
+  const W=S.world; if(!W||!W.pirates) return;
+  const now=nowMs();
+  if(W.pirateRespawnAt&&now>=W.pirateRespawnAt){
+    W.pirateRespawnAt=0;
+    const sp=pirateSpot();
+    if(sp){
+      const lvl=pirateLevelFor(Math.hypot(sp.x-WORLD_CX,sp.y-WORLD_CY));
+      const p=makePirate(lvl,sp.x,sp.y);
+      W.pirates.push(p); registerPirate(p);
+      pushFeed('\u2694 A new pirate crew — '+p.name+' (Lv '+p.lvl+') — has sailed into the straits.');
+      toast('\u2694 A new pirate crew sails in: '+esc(p.name)+' (Lv '+p.lvl+')');
+    }
+    save(); if(WMAP) drawWorld();
+  }
+}
+/* ---------------- pirate victory loot ---------------- */
+function pirateVictoryLoot(node){
+  const lvl=node.lvl, R=Math.random, ri=(a,b)=>a+Math.floor(R()*(b-a+1));
+  const rkeys=['food','wood','stone','gold'];
+  const pl={
+    resKey:rkeys[ri(0,3)],
+    resAmt:Math.round((80+lvl*45)*(0.8+R()*0.4)),
+    gems:Math.max(1,Math.round(lvl*(0.6+R()*0.8))),
+    chest:null, relicId:null, speedups:null, mapFound:false,
+    crew:ri(2,2+Math.ceil(lvl*0.8)), crewGold:0
+  };
+  pl.crewGold=pl.crew*25;
+  // treasure chest jackpot — richer crews carry fatter chests
+  if(R()<0.30+lvl*0.01){
+    const roll=R();
+    if(roll<0.45) pl.chest={kind:'gold', amt:Math.round(lvl*60*(0.8+R()*0.4))};
+    else if(roll<0.8) pl.chest={kind:'gems', amt:Math.round(lvl*2*(0.8+R()*0.4))};
+    else if(lvl>=6&&!hasRelic('fleece')) pl.chest={kind:'relic', relicId:'fleece'};
+    else if(lvl>=14&&!hasRelic('compass')) pl.chest={kind:'relic', relicId:'compass'};
+    else pl.chest={kind:'speedups', build:ri(1,2), troop:ri(1,2)};
+  }
+  // direct relic drops: higher-level holds may carry pirate relics
+  if((!pl.chest||pl.chest.kind!=='relic')){
+    if(lvl>=10&&!hasRelic('fleece')&&R()<0.25) pl.relicId='fleece';
+    else if(lvl>=18&&!hasRelic('compass')&&R()<0.25) pl.relicId='compass';
+  }
+  // building / troop speed-ups
+  if(R()<0.5) pl.speedups={build:ri(0,2), troop:ri(0,2)};
+  // treasure map: marks a rich resource cache in the wilds
+  if(R()<0.30) pl.mapFound=true;
+  return pl;
+}
+function grantPiratePlunder(pl){
+  S.speedups=S.speedups||{build:0,troop:0};
+  const res={}; res[pl.resKey]=pl.resAmt; grantRes(res,true);
+  grantGems(pl.gems);
+  if(pl.chest){
+    if(pl.chest.kind==='gold') grantRes({gold:pl.chest.amt},true);
+    else if(pl.chest.kind==='gems') grantGems(pl.chest.amt);
+    else if(pl.chest.kind==='relic'&&!hasRelic(pl.chest.relicId)) S.relics[pl.chest.relicId]=true;
+    else if(pl.chest.kind==='speedups'){ S.speedups.build+=pl.chest.build; S.speedups.troop+=pl.chest.troop; }
+  }
+  if(pl.relicId&&!hasRelic(pl.relicId)) S.relics[pl.relicId]=true;
+  if(pl.speedups){ S.speedups.build+=pl.speedups.build; S.speedups.troop+=pl.speedups.troop; }
+  if(pl.mapFound) spawnPirateCache();
+  save();
+}
+/* A treasure map found in a pirate hold marks a rich, gatherable cache in the wilds. */
+function spawnPirateCache(){
+  const sp=wildSpot(); if(!sp) return;
+  const rkeys=['food','wood','stone','gold'];
+  const res=rkeys[(Math.random()*4)|0];
+  const n=makeWildNode(res,sp.x,sp.y,null,1.1,1);
+  n.name='Pirate Cache'; n.amt=4000+((Math.random()*2000)|0); n.cache=true;
+  n.flavor='A buried pirate hoard — X marks the spot.';
+  S.world.extra.push(n); registerWildNode(n);
+  S.mapsFound=(S.mapsFound||0)+1;
+  pushFeed('\uD83D\uDDFA Treasure map led to a Pirate Cache in the wilds!');
+  toast('\uD83D\uDDFA Treasure map: a <b>Pirate Cache</b> has been marked in the wilds!');
+}
+/* Speed-ups: instant-finish tokens from pirate loot. */
+function useBuildSpeedup(){
+  S.speedups=S.speedups||{build:0,troop:0};
+  if(S.speedups.build<=0||!S.build){ toast('No construction in progress.'); return; }
+  S.speedups.build--; S.build.doneAt=nowMs();
+  toast('\u26A1 Builders work through the night — construction complete!');
+  save(); render();
+}
+function useTroopSpeedup(){
+  S.speedups=S.speedups||{build:0,troop:0};
+  if(S.speedups.troop<=0||!S.tqueue.length){ toast('No troops training right now.'); return; }
+  S.speedups.troop--;
+  const b=S.tqueue[0];
+  S.troops[b.type]=(S.troops[b.type]||0)+b.left;
+  S.stats.trained+=b.left;
+  addPlayerXP(XP_TRAIN*b.left);
+  S.tqueue.shift();
+  toast('\u26A1 The drillmaster cracks the whip — troops ready at once!');
+  save(); render();
 }
 /* Bottom-sheet panel for the tapped entity. Buttons wire to existing
    Game functions: openComposer (march/gather), sendScout (25 gold). */
@@ -2474,6 +2717,8 @@ function sheetHTML(id){
     } else if(n.kind==='ak'){
       const k=S.world.kingdoms.find(k=>k.id===id);
       sub='Rival kingdom · Level '+n.lvl+' · Power '+fmtN(k?k.power:0)+(n.tag?' · Alliance ['+n.tag+']':'');
+    } else if(n.kind==='pirate'){
+      sub='Pirate crew · Level '+n.lvl+' of '+PIRATE_MAX;
     } else {
       sub=(n.kind==='camp'?'Barbarian camp':n.kind==='ruin'?'Ruin':n.kind==='boss'?'FINAL BATTLE':'City')+(n.tier?' · Threat tier '+n.tier+' of 5':'');
     }
@@ -2482,6 +2727,10 @@ function sheetHTML(id){
       const g=n.garrison;
       gstr='<div class="small" style="margin:4px 0"><b>Garrison:</b> '+
         (rec.scouted?esc(TROOP_ORDER.filter(t=>g[t]>0).map(t=>g[t]+' '+TROOPS[t].name).join(', ')):'<i>Unknown</i> — send scouts to reveal.')+'</div>';
+      if(n.kind==='pirate'){
+        gstr+='<div class="small" style="margin:4px 0"><b>Recommended power:</b> '+fmtN(Math.round(armyPower(n.garrison)*1.2))+'</div>'+
+          '<div class="small" style="margin:4px 0">Plunder: a <b>random resource haul</b> — richer crews carry more — plus pirate loot: <b>◆ gems</b>, treasure chests, relics, speed-ups and treasure maps.</div>';
+      }
     }
     let btns='';
     if(n.kind==='gather'&&!cleared){
@@ -2618,9 +2867,12 @@ const RELICS = {
   trowel:  {name:'Mason\u2019s Trowel', ic:'trowel', desc:'Construction 10% faster.', flavor:'Laid the cornerstone of a hundred walls.'},
   whetstone:{name:'Ares\u2019 Whetstone', ic:'whet', desc:'+8% attack in battle.', flavor:'It has never known a dull edge.'},
   ledger:  {name:'Quartermaster\u2019s Ledger', ic:'ledger', desc:'+10% gathering yields.', flavor:'Every grain accounted for, every debt remembered.'},
-  helm:    {name:'Helm of the Drowned King', ic:'helm', desc:'Troy takes 10% less damage when raided.', flavor:'The sea gives back what it takes. Mostly.'}
+  helm:    {name:'Helm of the Drowned King', ic:'helm', desc:'Troy takes 10% less damage when raided.', flavor:'The sea gives back what it takes. Mostly.'},
+  /* Pirate relics (Charlie 2026-09-28): taken from pirate holds, not ruins. */
+  fleece:  {name:'Golden Fleece Scrap', ic:'fleece', desc:'Gathering yields +10%.', flavor:'It still smells of sea-salt and glory.'},
+  compass: {name:'Poseidon\u2019s Compass', ic:'compass', desc:'Armies march 10% faster.', flavor:'Its needle points only at plunder.'}
 };
-const RELIC_ORDER = ['sickle','trowel','whetstone','ledger','helm'];
+const RELIC_ORDER = ['sickle','trowel','whetstone','ledger','helm','fleece','compass'];
 const RUIN_RELIC = {shrine:'sickle', watchtower:'trowel', colossus:'whetstone', vault:'ledger', altar:'helm'};
 function hasRelic(id){ return !!(S.relics && S.relics[id]); }
 
@@ -2640,8 +2892,10 @@ function activeEvent(dayOverride){
   return null;
 }
 function gatherYieldMult(){
-  return (activeEvent()==='gather'?2:1) * (hasRelic('ledger')?1.1:1) * (S.patron==='demeter'?1.1:1);
+  return (activeEvent()==='gather'?2:1) * (hasRelic('ledger')?1.1:1) * (hasRelic('fleece')?1.1:1) * (S.patron==='demeter'?1.1:1);
 }
+/* Poseidon's Compass: pirate relic — armies march 10% faster (time multiplier). */
+function relicMarchTimeMult(){ return hasRelic('compass')?0.9:1; }
 /* site-specific yield: gathering inside your own territory is 25% richer */
 function gatherSiteMult(node){
   let m=gatherYieldMult();
@@ -2692,6 +2946,9 @@ function defaultState(){
     hero:{active:'theron', away:false, unlocked:['theron']},
     heroes:{theron:{xp:0}},   // id -> {xp}; xp tracked per hero, active hero earns
     relics:{},                // relic id -> true when found
+    gems:0,                   // premium currency — pirates are the free way to earn them (Charlie 2026-09-28)
+    speedups:{build:0, troop:0}, // pirate loot: instant-finish tokens
+    mapsFound:0,              // pirate treasure maps found (stat)
     incursionDay:'', incursionNext:false,
     quests:{},                // id -> true when claimed
     nodes:{},                 // id -> {cleared:true}
@@ -2877,6 +3134,8 @@ function grantRes(res, silent){
   }
   if(!silent) save();
 }
+/* Gems: premium currency — pirates are currently the only free way to earn them (Charlie 2026-09-28). */
+function grantGems(n){ S.gems = Math.max(0,(S.gems||0)+Math.floor(n)); save(); }
 function produce(dtSec){
   const rates = prodRates(), mult = playerProdMult(), cap = storageCap();
   for(const k of RES){
@@ -3053,7 +3312,7 @@ function sendMarch(nodeId, troops, heroId){
   for(const t of TROOP_ORDER) S.troops[t] -= (troops[t]||0);
   if(heroId) S.hero.away = true;
   let secs = node.march;
-  if(heroId) secs = Math.round(secs * heroMarchMult(heroId, heroLevel(heroId)));
+  secs = Math.round(secs * relicMarchTimeMult() * (heroId?heroMarchMult(heroId, heroLevel(heroId)):1));
   const t = nowMs();
   S.marches.push({id:S.marchSeq++, nodeId:nodeId,
     troops:{spearman:troops.spearman||0, archer:troops.archer||0, cavalry:troops.cavalry||0},
@@ -3074,7 +3333,7 @@ const FM_SPEED = 80;      // world units per second, forced march
 const FM_STOP_OFF = 70;   // halt this far short of a node's center
 function fmById(id){ return (S.fm||[]).find(f=>f.id===id); }
 function fmLive(){ return (S.fm||[]).filter(f=>!f.done); }
-function fmSpeed(f){ return FM_SPEED*(f.hero?heroMarchMult(f.hero,heroLevel(f.hero)):1); }
+function fmSpeed(f){ return FM_SPEED*(f.hero?heroMarchMult(f.hero,heroLevel(f.hero)):1)/relicMarchTimeMult(); }
 function fmPos(f, now){
   now=now||nowMs();
   if((f.state==='march'||f.state==='return')&&f.t1>f.t0){
@@ -3807,7 +4066,7 @@ function troopList(t){
   return parts.length?parts.join(', '):'none';
 }
 function chronicleBattleHTML(o){
-  // o: {nodeName, won, report, committed, loot, glory, heroName, heroXp, heroMoment, rally, xp}
+  // o: {nodeName, won, report, committed, loot, glory, heroName, heroXp, heroMoment, rally, xp, pirate}
   // Trophy card: duel header with power deltas, slain/fallen/remaining grid,
   // wax victor stamp, renown headline. Built to be screenshotted.
   const r=o.report;
@@ -3839,7 +4098,28 @@ function chronicleBattleHTML(o){
     (o.xp?'<div class="t-renown">✦ +'+fmtN(o.xp)+' Renown'+(o.heroXp?' · +'+o.heroXp+' hero XP':'')+' ✦</div>':'')+
     '<div class="t-spoils">Glory ✦ +'+fmtN(o.glory||0)+'</div>'+spoils+
     (o.relic?'<div class="t-spoils">🏺 Relic: <b>'+esc(RELICS[o.relic].name)+'</b> — '+esc(RELICS[o.relic].desc)+'</div>':'')+
+    (o.pirate?pirateSpoilsHTML(o.pirate):'')+
   '</div>';
+}
+/* Pirate plunder rows for the battle trophy card (Charlie 2026-09-28). */
+function pirateSpoilsHTML(pl){
+  let h='<div class="t-spoils">◆ +'+fmtN(pl.gems)+' gems</div>';
+  if(pl.chest){
+    if(pl.chest.kind==='gold') h+='<div class="t-spoils">🎁 Treasure chest: +'+fmtN(pl.chest.amt)+' gold</div>';
+    else if(pl.chest.kind==='gems') h+='<div class="t-spoils">🎁 Treasure chest: +'+fmtN(pl.chest.amt)+' gems</div>';
+    else if(pl.chest.kind==='relic') h+='<div class="t-spoils">🎁 Treasure chest: 🏺 <b>'+esc(RELICS[pl.chest.relicId].name)+'</b> — '+esc(RELICS[pl.chest.relicId].desc)+'</div>';
+    else if(pl.chest.kind==='speedups') h+='<div class="t-spoils">🎁 Treasure chest: ⚡ +'+pl.chest.build+' build speed-up'+(pl.chest.build>1?'s':'')+' · ⚡ +'+pl.chest.troop+' troop speed-up'+(pl.chest.troop>1?'s':'')+'</div>';
+  }
+  if(pl.relicId) h+='<div class="t-spoils">🏺 Relic: <b>'+esc(RELICS[pl.relicId].name)+'</b> — '+esc(RELICS[pl.relicId].desc)+'</div>';
+  if(pl.speedups&&(pl.speedups.build+pl.speedups.troop)>0){
+    const parts=[];
+    if(pl.speedups.build>0) parts.push('+'+pl.speedups.build+' build');
+    if(pl.speedups.troop>0) parts.push('+'+pl.speedups.troop+' troop');
+    h+='<div class="t-spoils">⚡ Speed-ups: '+parts.join(' · ')+'</div>';
+  }
+  if(pl.mapFound) h+='<div class="t-spoils">🗺 Treasure map — a <b>Pirate Cache</b> is marked in the wilds!</div>';
+  if(pl.crew>0) h+='<div class="t-spoils">⛓ '+pl.crew+' pirates captured — press them into service or ransom them below.</div>';
+  return h;
 }
 
 /* ---- replay skip (was referenced but never defined) ---- */
@@ -3859,13 +4139,23 @@ function resolveAttackMarch(m, silent){
   const heroXpGain = heroId ? (won ? r.xp : Math.floor(r.xp/3)) : 0;
   if(heroId) gainHeroXP(heroXpGain);
   let relicFound = null;
+  let piratePlunder = null;
   if(won){
     S.stats.wins++;
     recordBattleWin();
-    lootGranted = {...(node.loot||{})};
-    grantRes(lootGranted, true);
-    const rec = S.nodes[m.nodeId]||{};
-    rec.cleared = true; rec.clearedAt = nowMs(); S.nodes[m.nodeId] = rec;
+    if(node.kind==='pirate'){
+      // pirates pay a random resource haul plus pirate loot — never static node loot
+      piratePlunder=pirateVictoryLoot(node);
+      const pr={}; pr[piratePlunder.resKey]=piratePlunder.resAmt;
+      lootGranted=pr;
+      grantPiratePlunder(piratePlunder);
+      // pirates don't stay "cleared": the crew despawns and a new one sails in later
+    } else {
+      lootGranted = {...(node.loot||{})};
+      grantRes(lootGranted, true);
+      const rec = S.nodes[m.nodeId]||{};
+      rec.cleared = true; rec.clearedAt = nowMs(); S.nodes[m.nodeId] = rec;
+    }
     addPlayerXP(XP_BATTLE_WIN);
     // relics: first clear of a ruin grants its unique relic
     if(node.kind==='ruin'){
@@ -3900,7 +4190,8 @@ function resolveAttackMarch(m, silent){
   m.result = {won:won, report:r, nodeId:m.nodeId, nodeName:node.name, loot:lootGranted, heroXp:heroXpGain,
     troopsSent:{...m.troops}, glory:gloryGain, heroMoment:heroMoment,
     heroName:heroId?HEROES[heroId].name:null, rally:!!rally, xp:XP_BATTLE_WIN, relic:relicFound,
-    dmgRed:(heroId==='theron'&&heroLvl>=2)?0.85:1, heroId:heroId};
+    dmgRed:(heroId==='theron'&&heroLvl>=2)?0.85:1, heroId:heroId, pirate:piratePlunder};
+  if(node.kind==='pirate'&&won) pirateDefeated(node.id); // despawn; a new crew sails in later
   chronicle((won?'Victory at ':'Defeat at ')+node.name+(won?'.':' — the bards will not sing of this day.'));
   checkQuests();
   return m.result;
@@ -4494,6 +4785,7 @@ function renderHeader(){
   const tname = (S.title&&S.achv&&S.achv[S.title]) ? achvTitle(S.title) : '';
   $('#resbar .title').innerHTML = 'TROY &nbsp;·&nbsp; <span style="color:var(--gold)">Lv '+S.player.level+'</span>'+
     ' &nbsp;·&nbsp; <span style="color:var(--gold)" title="Glory — earned in battle, quests, rallies and outposts">❖ '+fmtN(S.glory||0)+'</span>'+
+    ' &nbsp;·&nbsp; <span style="color:#9fd8e8" title="Gems — won from pirates">◆ '+fmtN(S.gems||0)+'</span>'+
     (tname?' &nbsp;·&nbsp; <span style="color:var(--bronze-l);font-size:12px;letter-spacing:1px">'+esc(tname)+'</span>':'');
   $('#resgrid').innerHTML = RES.map(k=>
     '<div class="res-chip" title="Storage cap '+fmtN(cap)+'">'+
@@ -5153,6 +5445,7 @@ function nodeIcon(n){
   if(n.kind==='camp') return 'fire';
   if(n.kind==='city') return 'city';
   if(n.kind==='boss') return 'skull';
+  if(n.kind==='pirate') return 'compass';
   return 'ruin';
 }
 function renderArmy(){
@@ -5387,7 +5680,7 @@ function renderComposer(){
     return;
   }
   const hname = d.hero?HEROES[d.hero].name:'';
-  let secs=n.march; if(d.hero) secs=Math.round(secs*heroMarchMult(d.hero, heroLevel(d.hero)));
+  let secs=n.march; secs=Math.round(secs*relicMarchTimeMult()*(d.hero?heroMarchMult(d.hero, heroLevel(d.hero)):1));
   let html='<h3>'+(n.kind==='gather'?'Gather at ':'March to ')+esc(n.name)+'</h3>'+
     '<div class="small">March '+fmtT(secs)+' each way'+(d.hero&&heroMarchMult(d.hero,heroLevel(d.hero))<1?' ('+esc(HEROES[d.hero].abilities[0].name)+')':'')+'. Max 2 marches at once.</div><hr class="bronze">';
   const homeTotal=TROOP_ORDER.reduce((s2,t)=>s2+troopCount(t),0);
@@ -5423,11 +5716,13 @@ function battleReportModal(res){
     openModal(chronicleBattleHTML({
         nodeId:res.nodeId, nodeName:res.nodeName, won:res.won, report:r, committed:res.troopsSent, loot:res.loot,
         glory:res.glory, heroName:res.heroName, heroXp:res.heroXp, heroMoment:res.heroMoment,
-        rally:res.rally, xp:res.won?XP_BATTLE_WIN:0, relic:res.relic
+        rally:res.rally, xp:res.won?XP_BATTLE_WIN:0, relic:res.relic, pirate:res.pirate
       })+
       (res.won?'':'<div class="small">Tip: send scouts (25 gold) to reveal the garrison, then bring troops that counter it (Spearmen \u261E Cavalry, Archers \u261E Spearmen, Cavalry \u261E Archers).</div><br>')+
       '<div class="center"><button class="btn" onclick="Game.watchBattle()">\u2694 Watch Battle</button> '+
-      '<button class="btn" onclick="Game.closeModal()">Continue</button></div>');
+      (res.won&&res.pirate&&res.pirate.crew>0
+        ? '<button class="btn" onclick="Game.pirateCrewAftermath()">Continue</button>'
+        : '<button class="btn" onclick="Game.closeModal()">Continue</button>')+'</div>');
   };
   if(res.won){
     showBanner('⚔ VICTORY', res.nodeName+' has fallen — spoils for Troy');
@@ -5439,13 +5734,45 @@ function battleReportModal(res){
 /* 2-second victory ceremony: darken → bronze VICTORY ribbon → spoils → continue. */
 function victoryCeremony(res, done){
   const ov=$('#victory-overlay'); if(!ov){ done(); return; }
-  const spoils=Object.keys(res.loot||{}).map(k=>'+'+fmtN(res.loot[k])+' '+RES_NAME[k]).join(' · ');
+  const spoils=Object.keys(res.loot||{}).map(k=>'+'+fmtN(res.loot[k])+' '+RES_NAME[k]).join(' · ')+
+    (res.pirate&&res.pirate.gems?(' · ◆ +'+fmtN(res.pirate.gems)+' gems'):'');
   ov.querySelector('.vo-spoils').innerHTML=(spoils?('Spoils: <b>'+spoils+'</b><br>'):'')+
     'Renown <b style="color:#8fd48f">+'+fmtN(XP_BATTLE_WIN)+'</b> · Glory <b style="color:#e8c86a">✦ +'+fmtN(res.glory||0)+'</b>';
   ov.classList.add('show');
   const go=()=>{ ov.classList.remove('show'); done(); };
   $('#vo-continue').onclick=go;
   setTimeout(()=>{ if(ov.classList.contains('show')) go(); }, 6000); // safety: never trap the player
+}
+/* Captured pirate crew: Charlie's order (2026-09-28) — recruit them into
+   Troy's spearmen, or ransom them back for gold. One claim per crew. */
+function pirateCrewAftermath(){
+  closeModal();
+  const pl=LASTW&&LASTW.res?LASTW.res.pirate:null;
+  if(!pl||pl.crew<=0||pl.claimed){ render(); return; }
+  openModal('<h3>⛓ Captured Crew</h3>'+
+    '<div class="small">'+pl.crew+' pirates kneel before you, hands bound with sail-rope. The sea took their ship — what will you take?</div>'+
+    '<div class="wm-actions" style="margin-top:10px">'+
+    '<button class="btn" onclick="Game.pirateCrewPress()">⚔️ Press into service<br><span class="small">+'+pl.crew+' Spearmen</span></button> '+
+    '<button class="btn" onclick="Game.pirateCrewRansom()">💰 Ransom them<br><span class="small">+'+fmtN(pl.crewGold)+' gold</span></button></div>');
+}
+function pirateCrewPress(){
+  const pl=LASTW&&LASTW.res?LASTW.res.pirate:null;
+  if(!pl||pl.crew<=0||pl.claimed){ closeModal(); return; }
+  pl.claimed=true;
+  S.troops.spearman=(S.troops.spearman||0)+pl.crew;
+  S.stats.recruited=(S.stats.recruited||0)+pl.crew;
+  pushFeed('⛓ '+pl.crew+' captured pirates pressed into Troy\u2019s spearmen.');
+  toast('⛓ '+pl.crew+' pirates swear the oath — <b>+'+pl.crew+' Spearmen</b>!');
+  closeModal(); save(); render();
+}
+function pirateCrewRansom(){
+  const pl=LASTW&&LASTW.res?LASTW.res.pirate:null;
+  if(!pl||pl.crew<=0||pl.claimed){ closeModal(); return; }
+  pl.claimed=true;
+  grantRes({gold:pl.crewGold},true);
+  pushFeed('⛓ '+pl.crew+' pirates ransomed for '+fmtN(pl.crewGold)+' gold.');
+  toast('💰 Their kin paid the ransom — <b>+'+fmtN(pl.crewGold)+' gold</b>!');
+  closeModal(); save(); render();
 }
 function raidModal(msg){
   const r=msg.report;
@@ -5826,6 +6153,11 @@ const Game={
   draftMax(t){ if(UI.draft){ UI.draft.troops[t]=troopCount(t); renderComposer(); } },
   draftHero(){ if(UI.draft&&(heroHome()||UI.draft.hero)){ UI.draft.hero=UI.draft.hero?null:activeHero(); renderComposer(); } },
   sendDraft(){ const d=UI.draft; if(d) sendMarch(d.nodeId,d.troops,d.hero); },
+  useBuildSpeedup(){ useBuildSpeedup(); },
+  useTroopSpeedup(){ useTroopSpeedup(); },
+  pirateCrewAftermath(){ pirateCrewAftermath(); },
+  pirateCrewPress(){ pirateCrewPress(); },
+  pirateCrewRansom(){ pirateCrewRansom(); },
   claim(id){ claimQuest(id); },
   watchBattle(){ if(LASTW) watchBattleModal(LASTW); },
   watchToggle(){ watchToggle(); },
@@ -5886,6 +6218,7 @@ function tick(){
     battleReportModal(freports[freports.length-1]);
   }
   tickAIGatherers();             // rival kingdoms working wild nodes (Charlie 2026-09-28)
+  tickPirates();                 // pirate respawns after a delay (Charlie 2026-09-28)
   const raidMsg=tickRaid(false);
   if(raidMsg && !raidMsg.warn) raidModal(raidMsg);
   if(S.victory && !S.victoryShown){ S.victoryShown=true; victoryModal(); save(); }
@@ -6253,6 +6586,15 @@ function renderCity(){
   const ev=activeEvent();
   if(ev){ const E=EVENTS[ev];
     cards+='<div class="card" style="border-color:var(--gold)"><div class="small center"><b>'+esc(E.name)+'</b> — '+esc(E.desc)+'</div></div>'; }
+  // pirate loot: speed-up tokens (Charlie 2026-09-28)
+  const sp=S.speedups||{build:0,troop:0};
+  if(sp.build>0||sp.troop>0){
+    cards+='<div class="card" style="border-color:var(--bronze)"><div class="small center">⚡ <b>Speed-ups</b> — pirate loot</div>'+
+      '<div class="qrow" style="margin-top:6px"><div style="flex:1" class="small">🏗 Build ×'+sp.build+'</div>'+
+      '<button class="btn small" '+((sp.build>0&&S.build)?'':'disabled')+' onclick="Game.useBuildSpeedup()">Finish now</button></div>'+
+      '<div class="qrow" style="margin-top:4px"><div style="flex:1" class="small">🗡 Troop ×'+sp.troop+'</div>'+
+      '<button class="btn small" '+((sp.troop>0&&S.tqueue.length)?'':'disabled')+' onclick="Game.useTroopSpeedup()">Finish now</button></div></div>';
+  }
   cards+='<h2 class="sec">City of Troy</h2>';
   for(const k of BUILD_ORDER) cards+=buildingCard(k);
   cards+=renderSkinPicker();
@@ -6460,6 +6802,7 @@ function buildTerrain(){
   const st=document.createElement('style');
   st.textContent=
   'body.on-city #views,body.on-map #views{padding:0;overflow:hidden}'+
+  'body.on-map #wm-sheet.open{margin-bottom:70px}'+
   'body.on-city #view-city.active,body.on-map #view-map.active{height:100%}'+
   '#view-city{padding:0}';
   document.head.appendChild(st);
@@ -6572,6 +6915,7 @@ function drawWorld(){
       } else drawResIcon(c,n.res,mgx,mgy,gs);
       }
     }
+    else if(n.kind==='pirate') drawPirateIcon(c,p.x,p.y,s,{});
     else if(n.kind==='camp') drawCampIcon(c,p.x,p.y,s,{});
     else if(n.kind==='ruin') drawRuinIcon(c,p.x,p.y,s,{});
     else if(n.kind==='boss'){ drawCityIcon(c,p.x,p.y,s*1.15,{dark:true}); }
@@ -6584,15 +6928,15 @@ function drawWorld(){
       // wild nodes carry no plaque: their pulse + medallion is the tap affordance (Charlie 2026-09-28)
       const hasMarch=S.marches.some(mm=>mm.nodeId===n.id);
       const nplq=(hasMarch||n.wild)?null:drawPlaque(c,p.x,ty,n.name,{fs:nfs});
-      if(n.tier&&nplq){
+      if((n.tier||n.kind==='pirate')&&nplq){
         const bw2=Math.max(7,Math.min(11,8*z+2)); // badge hangs below the plaque with a real gap
-        drawLevelBadge(c,p.x,ty+nplq.h/2+bw2*1.12+6,n.tier,bw2);
+        drawLevelBadge(c,p.x,ty+nplq.h/2+bw2*1.12+6,(n.tier||n.lvl),bw2);
       }
     }
     // battle scars on attacked (not yet cleared) nodes: smoke -> fire -> burning
     const nrec=S.nodes[n.id];
     if(nrec&&nrec.dmg&&!cleared&&n.kind!=='gather') drawSiegeFire(c,p.x,p.y,s,Math.min(3,nrec.dmg),now);
-    m.drawn.push({id:n.id,sx:p.x,sy:p.y,r:n.kind==='gather'?Math.max(56,s*3.4):44});
+    m.drawn.push({id:n.id,sx:p.x,sy:p.y,r:(n.kind==='gather'||n.kind==='pirate')?Math.max(56,s*3.4):44});
   }
   // AI kingdoms — decluttered: icons always, labels deduped by spatial hash at far zoom.
   const far=z<0.18;
