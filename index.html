@@ -1879,22 +1879,27 @@ function drawWorld(){
     const cleared=S.nodes[n.id]&&S.nodes[n.id].cleared;
     c.globalAlpha=cleared?0.45:1;
     if(n.kind==='gather'){
+      const gs=s*1.55; // gather sites read big: they are the core early-game tap target
       const pic=RES_PIC[n.res];
-      c.fillStyle='rgba(0,0,0,0.22)'; c.beginPath(); c.ellipse(p.x,p.y+s*1.05,s*1.15,s*0.36,0,0,7); c.fill();
+      // soft pulsing gold ring — marks the site as interactive, RoK-style affordance
+      const pulse=0.30+0.18*Math.sin(now/520 + (n.wx%7));
+      c.strokeStyle='rgba(232,200,106,'+pulse.toFixed(3)+')'; c.lineWidth=Math.max(1.5,gs*0.12);
+      c.beginPath(); c.arc(p.x,p.y-gs*0.4,gs*1.55,0,7); c.stroke();
+      c.fillStyle='rgba(0,0,0,0.22)'; c.beginPath(); c.ellipse(p.x,p.y+gs*1.05,gs*1.15,gs*0.36,0,0,7); c.fill();
       const prop={food:'farm',wood:'lumber',stone:'quarry',gold:'brazier'}[n.res];
       const pim=BLD_PIC[prop];
       if(pim&&pim.complete&&pim.naturalWidth){
-        const ph=s*3.4, pw=ph*pim.naturalWidth/pim.naturalHeight;
-        c.drawImage(pim,p.x-pw/2,p.y+s*0.5-ph,pw,ph);
+        const ph=gs*3.4, pw=ph*pim.naturalWidth/pim.naturalHeight;
+        c.drawImage(pim,p.x-pw/2,p.y+gs*0.5-ph,pw,ph);
       }
       if(pic&&pic.complete&&pic.naturalWidth){
-        const ps=s*2.6;
+        const ps=gs*2.6;
         c.fillStyle='rgba(240,230,200,0.92)';
         rr(c,p.x-ps/2,p.y-ps/2,ps,ps,ps*0.28); c.fill();
-        c.strokeStyle='#8a6d3f'; c.lineWidth=Math.max(1,s*0.09);
+        c.strokeStyle='#8a6d3f'; c.lineWidth=Math.max(1,gs*0.09);
         rr(c,p.x-ps/2,p.y-ps/2,ps,ps,ps*0.28); c.stroke();
         c.drawImage(pic,p.x-ps/2+2,p.y-ps/2+2,ps-4,ps-4);
-      } else drawResIcon(c,n.res,p.x,p.y,s);
+      } else drawResIcon(c,n.res,p.x,p.y,gs);
     }
     else if(n.kind==='camp') drawCampIcon(c,p.x,p.y,s,{});
     else if(n.kind==='ruin') drawRuinIcon(c,p.x,p.y,s,{});
@@ -2290,7 +2295,7 @@ function defaultState(){
     bld:{palace:1, farm:0, lumber:0, quarry:0, barracks:0, walls:0},
     build:null,               // {key, toLevel, doneAt}
     tqueue:[],                // [{type, left, unitDoneAt, unitTime}]
-    troops:{spearman:0, archer:0, cavalry:0},
+    troops:{spearman:20, archer:0, cavalry:0}, // starter war-band: gathering works from minute one
     player:{level:1, xp:0},
     hero:{active:'theron', away:false, unlocked:['theron']},
     heroes:{theron:{xp:0}},   // id -> {xp}; xp tracked per hero, active hero earns
@@ -2374,6 +2379,20 @@ function load(){
     if(!s.glory){ // backfill Glory for existing saves from their legend so far
       const q=Object.keys(s.quests||{}).length;
       s.glory=(s.stats.wins||0)*15+q*25+(s.stats.raidsRepelled||0)*15+(s.stats.ruinsFound||0)*10;
+    }
+    // one-time starter war-band for saves created before troops existed at start:
+    // a genuinely fresh, troop-less reign gets 20 Spearmen so gathering works immediately
+    if(!s.starterArmy){
+      const home=TROOP_ORDER.reduce((a,t)=>a+Math.floor((s.troops&&s.troops[t])||0),0);
+      const away=(s.marches||[]).reduce((a,m)=>a+TROOP_ORDER.reduce((b,t)=>b+Math.floor((m.troops&&m.troops[t])||0),0),0);
+      const training=(s.tqueue||[]).length>0;
+      const everTrained=(s.stats&&s.stats.trained||0)>0;
+      if(home===0&&away===0&&!training&&!everTrained){
+        s.troops={spearman:20,archer:0,cavalry:0};
+        s._starterGranted=true;
+      }
+      s.starterArmy=true;
+      try{ localStorage.setItem(SAVE_KEY, JSON.stringify(s)); }catch(_){}
     }
     return s;
   }catch(e){ return null; }
@@ -4639,6 +4658,12 @@ function renderComposer(){
   let secs=n.march; if(d.hero) secs=Math.round(secs*heroMarchMult(d.hero, heroLevel(d.hero)));
   let html='<h3>'+(n.kind==='gather'?'Gather at ':'March to ')+esc(n.name)+'</h3>'+
     '<div class="small">March '+fmtT(secs)+' each way'+(d.hero&&heroMarchMult(d.hero,heroLevel(d.hero))<1?' ('+esc(HEROES[d.hero].abilities[0].name)+')':'')+'. Max 2 marches at once.</div><hr class="bronze">';
+  const homeTotal=TROOP_ORDER.reduce((s2,t)=>s2+troopCount(t),0);
+  if(homeTotal<=0){
+    html+='<div class="card" style="margin:8px 0"><div class="small">You have no troops to send.'+
+      ((S.bld.barracks||0)===0?' Build a <b>Barracks</b> in the city, then train Spearmen.':' Train troops below, then come back.')+'</div>'+
+      '<button class="btn small" style="margin-top:6px" onclick="Game.closeModal();Game.tab(\'army\')">Open Army &amp; Train</button></div>';
+  }
   for(const t of TROOP_ORDER){
     const av=troopCount(t);
     html+='<div class="stepper"><span style="width:118px;font-size:13px">'+icon(TROOPS[t].ic)+' '+TROOPS[t].name+' <span class="small">('+av+')</span></span>'+
@@ -5112,6 +5137,10 @@ function init(){
   const loaded=load();
   S = loaded || defaultState();
   ensureWorld();
+  if(S._starterGranted){ // one-time starter war-band toast for migrated saves
+    S._starterGranted=false; save();
+    setTimeout(()=>toast('⚔ Theron musters 20 Spearmen to your banner — tap a resource site on the world map to send them gathering.'),1400);
+  }
   UI.trainDraft={spearman:10,archer:10,cavalry:10};
   UI.practice={troops:{spearman:5,archer:5,cavalry:5},preset:'mirror'};
   if(!loaded){
