@@ -148,7 +148,7 @@ body.on-map #app{height:100vh;height:100dvh} /* definite height so the map flex 
 #wm-feed .wf-row{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.5}
 #wm-feed .wf-row:first-child{color:#ffe9c9}
 #wm-sheet{margin-top:6px;background:#2c1f0e;border:2px solid var(--bronze);border-radius:12px;
-  padding:10px 12px;color:#ffe9c9;display:none}
+  padding:10px 12px;color:#ffe9c9;display:none;max-height:42vh;overflow-y:auto;overscroll-behavior:contain}
 #wm-sheet.open{display:block;animation:fadein .2s}
 #wm-sheet h3{margin:0 0 2px;font-size:16px}
 #wm-sheet .small{color:#d8c491}
@@ -262,6 +262,7 @@ body.on-map #app{height:100vh;height:100dvh} /* definite height so the map flex 
 .stepper button{width:44px;height:44px;font-size:20px;border-radius:10px;border:2px solid var(--bronze-d);
   background:linear-gradient(180deg,var(--bronze-l),var(--bronze));font-weight:bold;cursor:pointer;color:#2c1f0e}
 .stepper .val{font-size:18px;font-weight:bold;min-width:52px;text-align:center;font-family:Arial,sans-serif}
+.stepper button.wide{width:auto;height:auto;padding:8px 14px;font-size:14px;white-space:nowrap}
 .qrow{display:flex;gap:10px;align-items:flex-start}
 .qnum{flex:0 0 30px;height:30px;border-radius:50%;background:var(--bronze);color:#fff;font-weight:bold;
   display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;border:2px solid var(--bronze-d)}
@@ -1531,6 +1532,7 @@ function s2w(sx,sy){ // screen -> world
 }
 function renderMap(){
   ensureWorld();
+  if(WMAP&&WMAP.fmRafKick&&(S.fm||[]).some(f=>f.state==='march'||f.state==='return'||f.state==='attack')) WMAP.fmRafKick();
   const root=$('#view-map');
   if(!$('#worldmap')){
     root.innerHTML=
@@ -1564,6 +1566,18 @@ function initWorldMap(){
   WMAP={canvas:cv, ctx:cv.getContext('2d'), cam:{x:WORLD_CX,y:WORLD_CY,z:0.35},
         pointers:{}, pinchD:0, downAt:0, downXY:null, moved:false, drawn:[], sel:null, t:0, placing:null};
   if(!WMAP.repaint) WMAP.repaint=setInterval(()=>{ if(UI.tab==='map'&&!document.hidden) drawWorld(); },900);
+  // smooth march rendering: rAF loop (~30fps) while a field warband is moving/attacking
+  if(!WMAP.fmRafKick){
+    let lastT=0;
+    const fmLoop=(t)=>{
+      WMAP.fmRaf=0;
+      if(UI.tab==='map'&&!document.hidden&&(S.fm||[]).some(f=>f.state==='march'||f.state==='return'||f.state==='attack')){
+        if(t-lastT>=33){ lastT=t; drawWorld(); }
+        WMAP.fmRaf=requestAnimationFrame(fmLoop);
+      }
+    };
+    WMAP.fmRafKick=()=>{ if(!WMAP.fmRaf) WMAP.fmRaf=requestAnimationFrame(fmLoop); };
+  }
   if(!WM_TERRAIN) buildTerrain();
   sizeWorldCanvas();
   // (top-bar resource icons are real painted images via RES_IMG now)
@@ -1640,6 +1654,37 @@ function worldTap(sx,sy){
     const w=s2w(sx,sy); WMAP.placing=null;
     confirmOutpost(Math.max(200,Math.min(WORLD-200,Math.round(w.x))), Math.max(200,Math.min(WORLD-200,Math.round(w.y))));
     drawWorld(); return;
+  }
+  /* Muster targeting mode: taps choose the destination (open ground, a
+     resource site, or an enemy). The route preview draws before Send. */
+  if(WMAP.muster){
+    let mbest=null, mbd=1e9;
+    for(const e of WMAP.drawn){
+      const r=e.r||40, d=Math.hypot(e.sx-sx,e.sy-sy);
+      if(d<r && d<mbd){ mbd=d; mbest=e; }
+    }
+    if(mbest&&mbest.id==='player'){ fmCancelMuster(); return; }
+    if(mbest&&mbest.id&&mbest.id.startsWith('fm:')) return;  // armies aren't destinations
+    const mu=WMAP.muster;
+    const rf=mu.retarget?fmById(mu.retarget):null;
+    const rp=rf?fmPos(rf):null;
+    const fx=rp?rp.x:WORLD_CX, fy=rp?rp.y:WORLD_CY;
+    if(mbest&&NODE_BY_ID[mbest.id]){
+      const n=NODE_BY_ID[mbest.id];
+      if(n.kind==='gather'){
+        const sp=fmNodeStop(n,fx,fy);
+        fmSetMusterDest(sp.x,sp.y,'gather',n.id,n.name);
+      } else {
+        const rec=S.nodes[n.id]||{};
+        if(rec.cleared){ toast('Already conquered.'); return; }
+        const sp=fmNodeStop(n,fx,fy);
+        fmSetMusterDest(sp.x,sp.y,'attack',n.id,n.name);
+      }
+    } else {
+      const w=s2w(sx,sy);
+      fmSetMusterDest(w.x,w.y,'move',null,'Open ground');
+    }
+    return;
   }
   let best=null, bd=1e9;
   for(const e of WMAP.drawn){
@@ -1766,14 +1811,87 @@ function drawMarches(c,now){
     drawMarchMedallion(c,x,y-48,m);
   }
 }
+/* Field-march armies: free-roaming warbands with live routes, commander
+   medallions, and status plaques. Tap one for Stop / Return / Redirect. */
+function drawFieldMarches(c,now){
+  const list=S.fm||[]; if(!list.length) return;
+  for(const f of list){
+    if(f.done) continue;
+    const p=fmPos(f,now), s=w2s(p.x,p.y);
+    const shim={phase:f.state==='return'?'back':'out', troops:f.troops, survivors:null, hero:f.hero};
+    if(f.state==='march'||f.state==='return'){
+      const d=w2s(f.destX,f.destY);
+      c.strokeStyle=f.state==='return'?'rgba(160,200,232,0.55)':'rgba(232,200,106,0.55)';
+      c.lineWidth=2.5; c.setLineDash([8,7]); c.lineDashOffset=-now/45;
+      c.beginPath(); c.moveTo(s.x,s.y); c.lineTo(d.x,d.y); c.stroke(); c.setLineDash([]);
+      // destination marker
+      const pr=12+Math.sin(now/300)*3;
+      c.strokeStyle='rgba(232,200,106,0.9)'; c.lineWidth=2.5;
+      c.beginPath(); c.arc(d.x,d.y,pr,0,7); c.stroke();
+      drawWarBand(c,s.x,s.y,p.ang||0,f.state==='return',now);
+      drawMarchMedallion(c,s.x,s.y-48,shim);
+      const lbl=f.state==='return'?'Returning · '+fmtT(fmEtaSecs(f,now)):'Marching · '+fmtT(fmEtaSecs(f,now));
+      drawPlaque(c,s.x,s.y-70,lbl,{fs:10});
+    } else if(f.state==='gather'){
+      // reuse the proven gather-camp diorama at the node
+      const n=NODE_BY_ID[f.destId];
+      if(n){
+        const b=w2s(n.wx,n.wy);
+        const total=GATHER_TIME*gatherTimeMult(f.hero)*1000;
+        const left=Math.max(0,f.gatherAt-now);
+        drawGatherCamp(c,b.x,b.y-6,1-left/total,left/1000,now);
+        drawGatherWorkers(c,b.x,b.y-6,now,left/1000,f,n);
+      } else { drawWarBand(c,s.x,s.y,p.ang||0,false,now); }
+      drawMarchMedallion(c,s.x,s.y-48,shim);
+      drawPlaque(c,s.x,s.y-70,'Gathering · '+fmtT(fmEtaSecs(f,now)),{fs:10});
+    } else if(f.state==='attack'){
+      const n=NODE_BY_ID[f.destId];
+      const b=n?w2s(n.wx,n.wy):s;
+      drawWarBand(c,s.x,s.y,Math.atan2(b.y-s.y,b.x-s.x),false,now);
+      const pr=16+Math.sin(now/180)*5;
+      c.strokeStyle='rgba(217,83,79,'+(0.65+0.3*Math.sin(now/180))+')'; c.lineWidth=3;
+      c.beginPath(); c.arc(s.x,s.y,pr+8,0,7); c.stroke();
+      c.strokeStyle='rgba(232,200,106,0.8)'; c.lineWidth=1.5;
+      c.beginPath(); c.arc(s.x,s.y,pr+13,0,7); c.stroke();
+      drawMarchMedallion(c,s.x,s.y-48,shim);
+      drawPlaque(c,s.x,s.y-70,'⚔️ Attacking!',{fs:11});
+    } else { // idle: holding position, awaiting orders
+      drawWarBand(c,s.x,s.y,p.ang||0,false,now);
+      drawMarchMedallion(c,s.x,s.y-48,shim);
+      drawPlaque(c,s.x,s.y-70,'Awaiting orders',{fs:10});
+    }
+    WMAP.drawn.push({id:'fm:'+f.id,sx:s.x,sy:s.y,r:56});
+  }
+}
+/* Muster route preview: dashed gold path + pulsing destination marker drawn
+   from Troy (or the warband's current position when redirecting), BEFORE Send. */
+function drawMusterPreview(c,now){
+  const mu=WMAP.muster; if(!mu||!mu.dest) return;
+  const rf=mu.retarget?fmById(mu.retarget):null;
+  const rp=rf?fmPos(rf,now):null;
+  const a=w2s(rp?rp.x:WORLD_CX, rp?rp.y:WORLD_CY);
+  const b=w2s(mu.dest.x,mu.dest.y);
+  c.strokeStyle=mu.dest.order==='attack'?'rgba(217,83,79,0.75)':'rgba(232,200,106,0.8)';
+  c.lineWidth=3; c.setLineDash([10,8]); c.lineDashOffset=-now/40;
+  c.beginPath(); c.moveTo(a.x,a.y); c.lineTo(b.x,b.y); c.stroke(); c.setLineDash([]);
+  const pr=14+Math.sin(now/280)*4;
+  c.strokeStyle=mu.dest.order==='attack'?'rgba(217,83,79,0.95)':'rgba(232,200,106,0.95)';
+  c.lineWidth=3; c.beginPath(); c.arc(b.x,b.y,pr,0,7); c.stroke();
+  c.strokeStyle='rgba(232,200,106,0.35)'; c.lineWidth=7;
+  c.beginPath(); c.arc(b.x,b.y,pr,0,7); c.stroke();
+  const wdist=Math.hypot(mu.dest.x-(rp?rp.x:WORLD_CX),mu.dest.y-(rp?rp.y:WORLD_CY));
+  const eta=wdist/(rf?fmSpeed(rf):FM_SPEED);
+  drawPlaque(c,b.x,b.y-26,(mu.dest.order==='gather'?'⛏ Gather':mu.dest.order==='attack'?'⚔️ Attack':'🚩 Move')+' · '+fmtT(eta),{fs:11});
+}
 /* Edge-docked march queue: medallion chips + live MM:SS countdowns + phase.
    Gathering becomes a monitored background process — refreshed every map repaint. */
 function updateMarchQueue(){
   const q=$('#march-queue'); if(!q) return;
-  if(UI.tab!=='map'||!S.marches.length){ q.innerHTML=''; q.style.display='none'; return; }
+  const fms=(S.fm||[]).filter(f=>!f.done);
+  if(UI.tab!=='map'||(!S.marches.length&&!fms.length)){ q.innerHTML=''; q.style.display='none'; return; }
   q.style.display='flex';
   const now=nowMs();
-  q.innerHTML=S.marches.map(m=>{
+  let html=S.marches.map(m=>{
     const n=NODE_BY_ID[m.nodeId]; if(!n) return '';
     let left=0, phase='';
     if(m.phase==='out'){ left=Math.max(0,(m.arriveAt-now)/1000); phase='Marching'; }
@@ -1786,6 +1904,22 @@ function updateMarchQueue(){
       '<div class="mq-info"><div class="mq-name">'+esc(n.name)+'</div>'+
       '<div class="mq-sub">'+phase+' · <b>'+fmtT(left)+'</b>'+load+'</div></div></div>';
   }).join('');
+  html+=fms.map(f=>{
+    const n=f.destId?NODE_BY_ID[f.destId]:null;
+    const name=n?n.name:'Open ground';
+    let phase='Holding';
+    if(f.state==='march') phase=f.order==='gather'?'Marching':f.order==='attack'?'Attacking':'Marching';
+    else if(f.state==='gather') phase='Gathering';
+    else if(f.state==='attack') phase='Attacking';
+    else if(f.state==='return') phase='Returning';
+    const hero=f.hero&&HEROES[f.hero]?HEROES[f.hero].name[0]:'⚔';
+    const load=f.cargo?(' +'+fmtN(Object.values(f.cargo)[0]||0)):('');
+    return '<div class="mq-row" onclick="Game.wmSelect(\'fm:'+f.id+'\')">'+
+      '<div class="mq-medal">'+esc(hero)+'</div>'+
+      '<div class="mq-info"><div class="mq-name">'+esc(name)+'</div>'+
+      '<div class="mq-sub">'+phase+' · <b>'+fmtT(fmEtaSecs(f,now))+'</b>'+load+'</div></div></div>';
+  }).join('');
+  q.innerHTML=html;
 }
 /* Bronze hero medallion floating over our marching armies: Theron's crested helm
    + depleting HP ring. Readable at any zoom — the army's identity anchor. */
@@ -2100,7 +2234,55 @@ function sheetHTML(id){
   if(id==='player'){
     html='<h3>'+esc(S.kingdomName||'Troy')+' <span class="small">· your capital</span></h3>'+
       '<div class="small">Palace Lv '+(S.bld.palace||1)+' · '+fmtN(armyTotal())+' troops · Power '+fmtN(armyPower())+'</div>'+
-      '<div class="wm-actions"><button class="btn small" onclick="Game.tab(\'city\')">Manage City</button></div>';
+      '<div class="wm-actions"><button class="btn small red" onclick="Game.fmMuster()">⚔️ March</button>'+
+      '<button class="btn small" onclick="Game.tab(\'city\')">Manage City</button></div>';
+  } else if(id==='muster'&&WMAP.muster){
+    /* Muster / redirect panel: pick the army, then tap the map for a
+       destination. Route preview draws on the canvas before Send. */
+    const mu=WMAP.muster;
+    if(mu.retarget){
+      const f=fmById(mu.retarget);
+      html='<h3>⚔️ Redirect warband</h3>'+
+        '<div class="small">'+(f?esc(fmHeroName(f))+' · '+fmtN(fmTroopTotal(f))+' troops':'Warband gone')+'</div>'+
+        '<div class="small" style="margin:6px 0">'+(mu.dest
+          ? '🎯 <b>'+esc(mu.dest.name)+'</b> — '+(mu.dest.order==='gather'?'gather resources':mu.dest.order==='attack'?'attack the enemy':'march there')
+          : '👆 <b>Tap the map</b> — open ground, a resource site, or an enemy. The route redraws from the warband\'s current position.')+'</div>'+
+        '<div class="wm-actions"><button class="btn red small" '+(mu.dest?'':'disabled')+' onclick="Game.fmSend()">Redirect</button>'+
+        '<button class="btn ghost small" onclick="Game.fmCancel()">Cancel</button></div>';
+    } else {
+      const total=TROOP_ORDER.reduce((s,t)=>s+((mu.troops||{})[t]||0),0);
+      html='<h3>⚔️ Muster warband</h3>';
+      for(const t of TROOP_ORDER){
+        const av=troopCount(t);
+        html+='<div class="stepper"><span style="width:118px;font-size:13px">'+icon(TROOPS[t].ic)+' '+TROOPS[t].name+' <span class="small">('+av+')</span></span>'+
+          '<button onclick="Game.fmAdj(\''+t+'\',-5)">−</button><span class="val">'+(mu.troops[t]||0)+'</span>'+
+          '<button onclick="Game.fmAdj(\''+t+'\',5)">+</button>'+
+          '<button class="btn small ghost" onclick="Game.fmMax(\''+t+'\')">Max</button></div>';
+      }
+      const heroBtn=(heroHome()||mu.hero)
+        ? '<button class="btn small wide'+(mu.hero?'':' ghost')+'" onclick="Game.fmHero()">'+(mu.hero?'✓ '+esc(HEROES[mu.hero].name)+' (Lv '+heroLevel(mu.hero)+')':'No commander')+'</button>'
+        : '<button class="btn small wide ghost" disabled>'+esc(HEROES[activeHero()].name)+' is away</button>';
+      html+='<div class="stepper">'+heroBtn+'<span class="small">Commander bonuses apply on the march.</span></div>';
+      html+='<div class="small" style="margin:6px 0">'+(mu.dest
+        ? '🎯 <b>'+esc(mu.dest.name)+'</b> — '+(mu.dest.order==='gather'?'gather resources':mu.dest.order==='attack'?'attack the enemy':'march there')
+        : '👆 <b>Tap the map</b> — open ground, a resource site, or an enemy. You\'ll see the route before you send.')+'</div>';
+      html+='<div class="wm-actions"><button class="btn red" '+((total>0&&mu.dest)?'':'disabled')+' onclick="Game.fmSend()">Send March ('+total+')</button> '+
+        '<button class="btn ghost small" onclick="Game.fmCancel()">Cancel</button></div>';
+    }
+  } else if(id.startsWith('fm:')){
+    /* Tapped a moving warband: live order + Stop / Return / Redirect. */
+    const f=fmById(parseInt(id.slice(3),10));
+    if(f&&!f.done){
+      const tstr=TROOP_ORDER.filter(t=>(f.troops[t]||0)>0).map(t=>Math.floor(f.troops[t])+' '+TROOPS[t].name).join(', ')||'no troops';
+      html='<h3>⚔️ Warband <span class="small">· '+esc(fmHeroName(f))+'</span></h3>'+
+        '<div class="small">'+esc(tstr)+'</div>'+
+        '<div class="small" style="margin:4px 0"><b>Status:</b> '+esc(fmStateLabel(f))+'</div>'+
+        '<div class="wm-actions">';
+      if(f.state==='march'||f.state==='return') html+='<button class="btn small" onclick="Game.fmStop('+f.id+')">⏹ Stop</button>';
+      if(f.state!=='return') html+='<button class="btn small" onclick="Game.fmReturn('+f.id+')">↩ Return</button>';
+      html+='<button class="btn small" onclick="Game.fmRetarget('+f.id+')">🎯 New destination</button>'+
+        '<button class="btn ghost small" onclick="Game.wmCloseSheet()">Close</button></div>';
+    }
   } else if(id.startsWith('op:')){
     const o=(S.outposts||[]).find(o=>'op:'+o.id===id);
     if(!o) return '';
@@ -2197,6 +2379,7 @@ function sheetHTML(id){
    Game functions: openComposer (march/gather), sendScout (25 gold). */
 function selectWorldEntity(id){
   WMAP.sel=id;
+  if(!id) WMAP.muster=null;   // closing the sheet cancels muster targeting
   const el=$('#wm-sheet');
   if(!id){ el.classList.remove('open'); el.innerHTML=''; drawWorld(); return; }
   const html=sheetHTML(id);
@@ -2353,6 +2536,8 @@ function defaultState(){
     quests:{},                // id -> true when claimed
     nodes:{},                 // id -> {cleared:true}
     marches:[],               // {id, nodeId, troops, hero, phase, arriveAt, gatherAt, returnAt, marchSecs}
+    fm:[],                    // field marches (city-out orders): {id, hero, troops, state, order, x,y, p0,p1, t0,t1, destX,destY, destId,nodeId, speed, gatherAt,attackAt, cargo,survivors, done}
+    fmSeq:1,
     stats:{trained:0, battles:0, wins:0, gathers:0, raidsRepelled:0, built:0},
     records:{maxPower:0, bestDayWins:0, winsToday:{day:'',n:0}, fastestSkaros:0, bestGather:0, bestStreak:0},
     achv:{},                 // achievement id -> true when earned
@@ -2717,6 +2902,210 @@ function sendMarch(nodeId, troops, heroId){
   toast('Marching to '+node.name+' ('+fmtT(secs)+').');
   if(rallyActiveFor(nodeId)) setTimeout(()=>toast('\u2691 Rally fervor! +15% attack on this assault.'), 600);
   save(); render();
+}
+
+/* ================= Field marches (city-out march orders) =================
+   Additive to S.marches (node-gather flow untouched). A field march is an army
+   the player sends from Troy to ANY map point, resource node, or hostile
+   target, with Stop / Return / Redirect while it moves.
+   Position is a pure function of timestamps (fmPos) so rendering is smooth
+   and frame-rate independent; tickFm only flips states on arrival. */
+const FM_SPEED = 80;      // world units per second, forced march
+const FM_STOP_OFF = 70;   // halt this far short of a node's center
+function fmById(id){ return (S.fm||[]).find(f=>f.id===id); }
+function fmLive(){ return (S.fm||[]).filter(f=>!f.done); }
+function fmSpeed(f){ return FM_SPEED*(f.hero?heroMarchMult(f.hero,heroLevel(f.hero)):1); }
+function fmPos(f, now){
+  now=now||nowMs();
+  if((f.state==='march'||f.state==='return')&&f.t1>f.t0){
+    if(now>=f.t1) return {x:f.p1.x, y:f.p1.y, done:true, ang:Math.atan2(f.p1.y-f.p0.y,f.p1.x-f.p0.x)};
+    const t=Math.max(0,Math.min(1,(now-f.t0)/(f.t1-f.t0)));
+    return {x:f.p0.x+(f.p1.x-f.p0.x)*t, y:f.p0.y+(f.p1.y-f.p0.y)*t, done:false,
+            ang:Math.atan2(f.p1.y-f.p0.y,f.p1.x-f.p0.x)};
+  }
+  return {x:f.x, y:f.y, done:false, ang:f.ang||0};
+}
+/* Begin a new leg from the army's CURRENT position (never from the city or
+   the original start point). order: 'move'|'gather'|'attack'|'return'. */
+function fmSetLeg(f, dx, dy, order, destId){
+  const now=nowMs(), p=fmPos(f,now);
+  dx=Math.max(200,Math.min(WORLD-200,dx)); dy=Math.max(200,Math.min(WORLD-200,dy));
+  const dist=Math.hypot(dx-p.x,dy-p.y);
+  f.x=p.x; f.y=p.y; f.ang=p.ang;
+  f.p0={x:p.x,y:p.y}; f.p1={x:dx,y:dy};
+  f.t0=now; f.t1=now+Math.max(500,(dist/fmSpeed(f))*1000);
+  f.destX=dx; f.destY=dy; f.destId=destId||null; f.nodeId=destId||null;
+  f.order=order; f.state=(order==='return')?'return':'march';
+  if(WMAP&&WMAP.fmRafKick) WMAP.fmRafKick();
+}
+function fmEtaSecs(f, now){
+  now=now||nowMs();
+  if(f.state==='march'||f.state==='return') return Math.max(0,(f.t1-now)/1000);
+  if(f.state==='gather') return Math.max(0,(f.gatherAt-now)/1000);
+  if(f.state==='attack') return Math.max(0,(f.attackAt-now)/1000);
+  return 0;
+}
+function fmStateLabel(f){
+  const n=f.destId?NODE_BY_ID[f.destId]:null;
+  const where=n?(' → '+n.name):(f.destX!==undefined?(' · X:'+Math.round(f.destX)+' Y:'+Math.round(f.destY)):'');
+  const eta=fmtT(fmEtaSecs(f));
+  if(f.state==='march') return (f.order==='gather'?'Marching to gather':f.order==='attack'?'Marching to attack':'Marching')+where+' · '+eta;
+  if(f.state==='gather') return 'Gathering '+(n?RES_NAME[n.res]:'')+' · '+eta+' left';
+  if(f.state==='attack') return 'Attacking '+(n?n.name:'')+'!';
+  if(f.state==='return') return 'Returning to Troy · '+eta;
+  return 'Holding position · awaiting orders';
+}
+function fmTroopTotal(f){ return TROOP_ORDER.reduce((s,t)=>s+Math.floor((f.troops||{})[t]||0),0); }
+function fmHeroName(f){ return f.hero&&HEROES[f.hero]?HEROES[f.hero].name:'No commander'; }
+
+function fmArrive(f){
+  const now=nowMs();
+  f.x=f.p1.x; f.y=f.p1.y; f.ang=Math.atan2(f.p1.y-f.p0.y,f.p1.x-f.p0.x);
+  const n=f.destId?NODE_BY_ID[f.destId]:null;
+  const rec=f.destId?(S.nodes[f.destId]||{}):{};
+  if(f.order==='gather'&&n&&n.kind==='gather'){
+    f.state='gather';
+    f.gatherAt=now+GATHER_TIME*gatherTimeMult(f.hero)*1000;
+    toast('⛏ Warband reached '+esc(n.name)+' — gathering '+RES_NAME[n.res]+'…');
+  } else if(f.order==='attack'&&n&&n.kind!=='gather'&&!rec.cleared){
+    f.state='attack';
+    f.attackAt=now+4500;   // visible clash before the assault resolves
+    if(WMAP&&WMAP.fmRafKick) WMAP.fmRafKick();
+    toast('⚔️ Warband attacks '+esc(n.name)+'!');
+  } else {
+    f.state='idle'; f.order='move'; f.destId=null; f.nodeId=null;
+  }
+  if(WMAP&&WMAP.sel==='fm:'+f.id) selectWorldEntity('fm:'+f.id);
+}
+function fmGatherDone(f){
+  const n=NODE_BY_ID[f.destId];
+  const t=fmTroopTotal(f);
+  f.cargo={}; f.cargo[n.res]=Math.round(t*GATHER_YIELD*gatherSiteMult(n));
+  ensureRecords();
+  if(f.cargo[n.res]>S.records.bestGather) S.records.bestGather=f.cargo[n.res];
+  S.stats.gathers++;
+  addPlayerXP(XP_GATHER);
+  fmSetLeg(f, WORLD_CX, WORLD_CY, 'return', null);
+  toast('⛏ Gathering done — warband returning with the spoils.');
+}
+function fmResolveAttack(f){
+  const n=NODE_BY_ID[f.destId];
+  f.marchSecs=Math.max(5,Math.round((f.t1-f.t0)/1000));
+  const res=resolveAttackMarch(f, false);   // reuses the proven battle engine
+  f.troops={spearman:0,archer:0,cavalry:0};
+  for(const t of TROOP_ORDER) f.troops[t]=Math.floor((f.survivors||{})[t]||0);
+  f.survivors=null; f.phase=null;
+  if(fmTroopTotal(f)<=0){
+    f.done=true; f.state='idle';
+    if(f.hero) S.hero.away=false;
+    toast('⚔️ The warband fell at '+esc(n?n.name:'the battlefield')+'.');
+  } else {
+    fmSetLeg(f, WORLD_CX, WORLD_CY, 'return', null);
+  }
+  if(WMAP&&WMAP.sel==='fm:'+f.id) selectWorldEntity('fm:'+f.id);
+  return res;
+}
+function fmReturnHome(f){
+  for(const t of TROOP_ORDER) S.troops[t]=(S.troops[t]||0)+Math.floor((f.troops[t]||0));
+  if(f.cargo) grantRes(f.cargo, true);
+  if(f.hero) S.hero.away=false;
+  f.done=true;
+  if(f.cargo){
+    const k=Object.keys(f.cargo)[0];
+    toast('Warband returned: +'+fmtN(f.cargo[k])+' '+RES_NAME[k]+' (+'+XP_GATHER+' XP)');
+    checkQuests();
+  } else {
+    toast('Warband returned to Troy.');
+  }
+  if(WMAP&&WMAP.sel==='fm:'+f.id) selectWorldEntity(null);
+}
+function tickFm(){
+  let changed=false; const now=nowMs(); const reports=[];
+  for(const f of (S.fm||[])){
+    if(f.done) continue;
+    if(f.state==='march'&&now>=f.t1){ fmArrive(f); changed=true; }
+    else if(f.state==='gather'&&now>=f.gatherAt){ fmGatherDone(f); changed=true; }
+    else if(f.state==='attack'&&now>=f.attackAt){ const r=fmResolveAttack(f); if(r) reports.push(r); changed=true; }
+    else if(f.state==='return'&&now>=f.t1){ fmReturnHome(f); changed=true; }
+  }
+  const before=(S.fm||[]).length;
+  S.fm=(S.fm||[]).filter(f=>!f.done);
+  if(S.fm.length!==before) changed=true;
+  if(changed) save();
+  return reports;
+}
+/* Stop point for a node target: on the line from the army toward the node,
+   FM_STOP_OFF short of the node's center (never inside it). */
+function fmNodeStop(n, fx, fy){
+  const dx=n.wx-fx, dy=n.wy-fy, d=Math.hypot(dx,dy)||1;
+  return {x:n.wx-dx/d*FM_STOP_OFF, y:n.wy-dy/d*FM_STOP_OFF};
+}
+
+/* ---- muster flow: city -> March -> army panel -> tap destination -> Send ----
+   WMAP.muster={troops, hero, dest:{x,y,order,destId,name}|null, retarget:fmId|null} */
+function fmOpenMuster(){
+  if(!WMAP) return;
+  const mt={spearman:0,archer:0,cavalry:0};
+  for(const t of TROOP_ORDER) mt[t]=troopCount(t);   // preset: the full home army
+  WMAP.muster={troops:mt, hero:heroHome()?activeHero():null, dest:null, retarget:null};
+  selectWorldEntity('muster');
+}
+function fmCancelMuster(){ if(!WMAP) return; WMAP.muster=null; selectWorldEntity(null); drawWorld(); }
+function fmMusterAdj(t,d){ const mu=WMAP&&WMAP.muster; if(!mu||!mu.troops) return;
+  mu.troops[t]=Math.max(0,Math.min(troopCount(t),(mu.troops[t]||0)+d)); selectWorldEntity('muster'); }
+function fmMusterMax(t){ const mu=WMAP&&WMAP.muster; if(!mu||!mu.troops) return;
+  mu.troops[t]=troopCount(t); selectWorldEntity('muster'); }
+function fmMusterHero(){ const mu=WMAP&&WMAP.muster; if(!mu) return;
+  if(mu.hero||heroHome()){ mu.hero=mu.hero?null:activeHero(); selectWorldEntity('muster'); } }
+function fmSetMusterDest(x,y,order,destId,name){
+  const mu=WMAP&&WMAP.muster; if(!mu) return;
+  mu.dest={x:x,y:y,order:order,destId:destId||null,name:name};
+  selectWorldEntity('muster'); drawWorld();
+}
+function fmSend(){
+  const mu=WMAP&&WMAP.muster; if(!mu||!mu.dest){ toast('Tap the map to choose a destination first.'); return; }
+  if(mu.retarget){
+    const f=fmById(mu.retarget);
+    WMAP.muster=null;
+    if(!f){ selectWorldEntity(null); return; }
+    fmSetLeg(f, mu.dest.x, mu.dest.y, mu.dest.order, mu.dest.destId);
+    toast('⚔️ Warband redirected — '+esc(mu.dest.name||'new ground')+'.');
+    save(); selectWorldEntity('fm:'+f.id); drawWorld(); return;
+  }
+  const total=TROOP_ORDER.reduce((s,t)=>s+((mu.troops||{})[t]||0),0);
+  if(total<=0){ toast('Select at least one troop.'); return; }
+  if(fmLive().length>=2){ toast('Only 2 field marches at once in this version.'); return; }
+  for(const t of TROOP_ORDER) if((mu.troops[t]||0)>troopCount(t)){ toast('Not enough '+TROOPS[t].name+'s.'); return; }
+  if(mu.hero&&!heroHome()){ toast(HEROES[mu.hero].name+' is already away.'); return; }
+  for(const t of TROOP_ORDER) S.troops[t]-=(mu.troops[t]||0);
+  if(mu.hero) S.hero.away=true;
+  const f={id:S.fmSeq++, hero:mu.hero||null,
+    troops:{spearman:mu.troops.spearman||0,archer:mu.troops.archer||0,cavalry:mu.troops.cavalry||0},
+    state:'march', order:mu.dest.order, x:WORLD_CX, y:WORLD_CY, ang:0,
+    destId:mu.dest.destId, nodeId:mu.dest.destId, cargo:null, survivors:null, done:false};
+  S.fm.push(f);
+  fmSetLeg(f, mu.dest.x, mu.dest.y, mu.dest.order, mu.dest.destId);
+  WMAP.muster=null;
+  toast('⚔️ Warband marching — '+esc(mu.dest.name||('X:'+Math.round(mu.dest.x)+' Y:'+Math.round(mu.dest.y)))+' ('+fmtT((f.t1-f.t0)/1000)+').');
+  save(); render(); selectWorldEntity('fm:'+f.id);
+}
+function fmStop(id){
+  const f=fmById(id); if(!f||f.done) return;
+  const p=fmPos(f,nowMs()); f.x=p.x; f.y=p.y; f.ang=p.ang;
+  f.state='idle'; f.order='move'; f.destId=null; f.nodeId=null;
+  save(); selectWorldEntity('fm:'+id); drawWorld(); toast('Warband halted — awaiting orders.');
+}
+function fmReturn(id){
+  const f=fmById(id); if(!f||f.done) return;
+  if(f.state==='return'){ toast('Already returning.'); return; }
+  fmSetLeg(f, WORLD_CX, WORLD_CY, 'return', null);
+  save(); selectWorldEntity('fm:'+id); drawWorld(); toast('Warband returning to Troy.');
+}
+function fmRetarget(id){
+  const f=fmById(id); if(!f||f.done||!WMAP) return;
+  WMAP.muster={troops:null, hero:null, dest:null, retarget:id};
+  selectWorldEntity('muster'); drawWorld();
+  toast('Tap the map to choose a new destination.');
 }
 
 /* ================= Feature set: prologue, territory, rallies, living world ================= */
@@ -5256,6 +5645,15 @@ const Game={
   wmSaveName(){ const el=$('#wm-kname'); if(el&&S){ S.kingdomName=el.value.trim().slice(0,24)||'Troy'; el.value=S.kingdomName; save(); drawWorld(); toast('Kingdom renamed to '+esc(S.kingdomName)+'.'); } },
   wmCloseSheet(){ selectWorldEntity(null); },
   wmSelect(id){ selectWorldEntity(id); },
+  fmMuster(){ fmOpenMuster(); },
+  fmCancel(){ fmCancelMuster(); },
+  fmAdj(t,d){ fmMusterAdj(t,d); },
+  fmMax(t){ fmMusterMax(t); },
+  fmHero(){ fmMusterHero(); },
+  fmSend(){ fmSend(); },
+  fmStop(id){ fmStop(id); },
+  fmReturn(id){ fmReturn(id); },
+  fmRetarget(id){ fmRetarget(id); },
   wmOutpost(){ wmOutpostToggle(); },
   plantOutpost(){ plantOutpost(); },
   removeOutpost(id){ removeOutpost(id); },
@@ -5287,6 +5685,11 @@ function tick(){
   if(reports.length){
     for(let i=0;i<reports.length-1;i++) toast((reports[i].won?'Victory':'Defeat')+' at '+reports[i].nodeName);
     battleReportModal(reports[reports.length-1]);
+  }
+  const freports=tickFm();   // field marches: arrivals, gathering, attacks, returns
+  if(freports.length){
+    for(let i=0;i<freports.length-1;i++) toast((freports[i].won?'Victory':'Defeat')+' at '+freports[i].nodeName);
+    battleReportModal(freports[freports.length-1]);
   }
   const raidMsg=tickRaid(false);
   if(raidMsg && !raidMsg.warn) raidModal(raidMsg);
@@ -6065,6 +6468,8 @@ function drawWorld(){
     if(S.raidsOn&&S.raidWarnAt&&now>=S.raidWarnAt&&now<S.nextRaidAt) drawSiegeFire(c,p.x,p.y,20,1,now);
   }
   drawMarches(c,now);
+  drawFieldMarches(c,now);
+  drawMusterPreview(c,now);
   drawAIMarches(c);
   drawOutposts(c);
   drawRallies(c,now);
