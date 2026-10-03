@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>TROY — Rise of the Bronze City</title>
+<!-- CrazyGames SDK v3 (portal integration; no-ops off-portal) -->
+<script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
 <style>
 /* ============ TROY v1 — bronze / marble / deep-red theme ============ */
 :root{
@@ -32,6 +34,11 @@ body{background:#14100a;font-family:Georgia,'Times New Roman',serif;color:var(--
 .res-chip .r-rate{font-size:10px;color:var(--bronze-l);font-family:Arial,sans-serif}
 .ic{display:inline-flex;vertical-align:middle}
 .ic svg{width:1.15em;height:1.15em;vertical-align:-0.2em}
+/* ---------- portal audio toggle ---------- */
+#mute-btn{position:absolute;top:7px;right:8px;background:rgba(246,241,227,.10);
+  border:1px solid var(--bronze-d);border-radius:8px;color:var(--marble);font-size:15px;
+  width:38px;height:32px;cursor:pointer;line-height:1;padding:0}
+#mute-btn:active{transform:scale(.94)}
 /* ---------- hint bar ---------- */
 #hintbar{background:linear-gradient(90deg,var(--red),var(--red-d));color:#ffe9c9;
   font-size:13px;padding:7px 12px;display:flex;gap:8px;align-items:center;z-index:29}
@@ -428,9 +435,17 @@ body[data-skin="warred"] .lvl-pips{color:#a83a3a}
 </style>
 </head>
 <body>
+<div id="boot-splash" style="position:fixed;inset:0;z-index:999;background:#14100a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:Georgia,'Times New Roman',serif">
+  <div style="font-size:36px;letter-spacing:10px;color:#d9bd85;font-weight:bold;margin-left:10px">TROY</div>
+  <div style="font-size:12px;letter-spacing:4px;color:#8a6d3f">RISE OF THE BRONZE CITY</div>
+  <div style="width:220px;height:8px;border:1px solid #8a6d3f;border-radius:5px;overflow:hidden;background:#241a0e"><div id="boot-bar" style="height:100%;width:34%;background:linear-gradient(90deg,#8a6d3f,#d9bd85);border-radius:4px;animation:bootslide 1.1s ease-in-out infinite alternate"></div></div>
+  <div style="font-size:11px;color:#5a4a33;font-family:Arial,sans-serif;letter-spacing:1px">Raising the walls&hellip;</div>
+</div>
+<style>@keyframes bootslide{from{margin-left:-34%}to{margin-left:100%}}</style>
 <div id="app">
   <header id="resbar">
     <div class="title">TROY</div>
+    <button id="mute-btn" onclick="AudioSys.toggle()" title="Sound on/off" aria-label="Toggle sound">🔊</button>
     <div id="resgrid"></div>
     <div id="saveind" title="Your progress saves automatically on this device">● saving…</div>
   </header>
@@ -4004,7 +4019,10 @@ function prolShow(step){
       (p?'<br>\u00b7 Blessing of <b>'+esc(p.name)+'</b>: '+esc(p.desc):'')+'</div>'+
       '<button class="btn big" onclick="Game.prolFinish()">Found New Troy \u2192</button>';
   }
-  el.innerHTML='<div class="prol-card">'+body+'</div>';
+  el.innerHTML='<div class="prol-card">'+body+(step<4?'<div style="margin-top:16px">'+
+    '<button onclick="Game.prolSkip()" style="background:none;border:1px solid #5a4a33;color:#8a6d3f;'
+    +'font-size:12px;font-family:Arial,sans-serif;padding:7px 16px;border-radius:8px;cursor:pointer">'
+    +'Skip the tale \u2192</button></div>':'')+'</div>';
   el.classList.add('open');
 }
 function prolPatron(p){
@@ -4035,6 +4053,15 @@ function prolFinish(){
   const el=$('#prologue'); if(el) el.classList.remove('open');
   S.seenPrologue=true; save(); render();
   welcomeModal();
+}
+function prolSkip(){
+  if(!S||S.seenPrologue) return;
+  if(!S.patron){ // default patron for skippers: Athena
+    S.patron='athena'; grantRes({stone:100},true);
+    chronicle('New Troy takes Athena as its patron.');
+  }
+  prolVictory(); // scripted first-triumph rewards (guarded by seenPrologue)
+  prolFinish();
 }
 
 /* ---- Hero moments (Glory attribution) ---- */
@@ -4126,6 +4153,7 @@ function pirateSpoilsHTML(pl){
 function watchSkip(){ if(WATCH.pack) watchFinish(); }
 
 function resolveAttackMarch(m, silent){
+  if(!silent) AudioSys.battle();
   const node = NODE_BY_ID[m.nodeId];
   if(m.hero===true) m.hero='theron';   // normalize ancient saves
   const heroId = m.hero||null;
@@ -4174,6 +4202,7 @@ function resolveAttackMarch(m, silent){
       const days=(S.daysSeen||[]).length||1;
       if(!S.records.fastestSkaros||days<S.records.fastestSkaros) S.records.fastestSkaros=days;
       chronicle('Skaros the Render lies broken before the Bronze Gate!');
+      AudioSys.victory(); CG.happytime(); CG.progress(100);
       setTimeout(()=>showBanner('⚔ SKAROS HAS FALLEN', 'Troy stands unchallenged — the age of the Bronze City begins'), 2500);
     }
   }
@@ -4436,6 +4465,10 @@ function claimQuest(id){
   }
   if(id==='q8'){ S.victory=true; }
   toast('Quest complete: '+q.name+' — '+rw.join(', '));
+  AudioSys.victory();
+  var __qc=Object.keys(S.quests).length;
+  CG.progress(__qc>=8?100:__qc/8*100);
+  if(id==='q8') CG.happytime();
   save(); render();
 }
 
@@ -4719,6 +4752,7 @@ function renderSkinPicker(){
   // finish elapsed build
   if(S.build && nowMs()>=S.build.doneAt){
     const b=S.build; S.bld[b.key]=b.toLevel; S.build=null;
+    AudioSys.build();
     addPlayerXP(XP_BUILD,true);
     events.push(BUILDINGS[b.key].name+' finished → Lv '+b.toLevel+' (+'+XP_BUILD+' XP)');
   }
@@ -6165,7 +6199,7 @@ const Game={
   watchSkip(){ watchSkip(); },
   backToReport(){ backToReport(); },
   closeModal(){ closeModal(); },
-  enterTitle(){ const t=$('#titlescreen'); if(t) t.style.display='none'; if(S&&!S.seenPrologue) startPrologue(); },
+  enterTitle(){ AudioSys.ensure(); CG.gameplayStart(); const t=$('#titlescreen'); if(t) t.style.display='none'; if(S&&!S.seenPrologue) startPrologue(); },
   wmZoom(f){ if(WMAP){ WMAP.cam.z*=f; clampCam(); drawWorld(); } },
   wmCenter(){ if(WMAP){ WMAP.cam.x=WORLD_CX; WMAP.cam.y=WORLD_CY; WMAP.cam.z=0.35; drawWorld(); } },
   wmSaveName(){ const el=$('#wm-kname'); if(el&&S){ S.kingdomName=el.value.trim().slice(0,24)||'Troy'; el.value=S.kingdomName; save(); drawWorld(); toast('Kingdom renamed to '+esc(S.kingdomName)+'.'); } },
@@ -6189,11 +6223,166 @@ const Game={
   prolPatron(p){ prolPatron(p); },
   prolFight(){ prolFight(); },
   prolFinish(){ prolFinish(); },
+  prolSkip(){ prolSkip(); },
   setSkin(id){ setSkin(id); },
   setTitle(id){ setTitle(id); },
   equipTitle(id){ setTitle(id); closeModal(); }
 };
 window.Game=Game;
+
+
+/* ============ CrazyGames SDK v3 portal integration (safe off-portal) ============ */
+window.CG={
+  ready:false, portalMuted:false, _bootDone:false, _loadStopped:false,
+  boot:function(){
+    var self=this;
+    try{
+      if(window.CrazyGames&&window.CrazyGames.SDK){
+        window.CrazyGames.SDK.init().then(function(){
+          self.ready=true;
+          var g=window.CrazyGames.SDK.game;
+          try{ g.loadingStart(); }catch(e){}
+          try{
+            var st=g.settings;
+            if(st&&st.muteAudio){ self.portalMuted=true; }
+            g.addSettingsChangeListener(function(ns){
+              self.portalMuted=!!(ns&&ns.muteAudio);
+              if(window.AudioSys) AudioSys.applyMute();
+            });
+          }catch(e){}
+          if(self._bootDone) self._finishLoad();
+        }).catch(function(){ /* portal unavailable — play on */ });
+      }
+    }catch(e){}
+  },
+  gameReady:function(){
+    this._bootDone=true;
+    if(this.ready){ this._finishLoad(); return; }
+    var self=this, tries=0;
+    var t=setInterval(function(){
+      tries++;
+      if(self.ready||tries>40){ clearInterval(t); self._finishLoad(); }
+    },500);
+  },
+  _finishLoad:function(){
+    if(this._loadStopped) return; this._loadStopped=true;
+    try{ if(this.ready) window.CrazyGames.SDK.game.loadingStop(); }catch(e){}
+  },
+  gameplayStart:function(){ try{ if(this.ready) window.CrazyGames.SDK.game.gameplayStart(); }catch(e){} },
+  gameplayStop:function(){ try{ if(this.ready) window.CrazyGames.SDK.game.gameplayStop(); }catch(e){} },
+  happytime:function(){ try{ if(this.ready) window.CrazyGames.SDK.game.happytime(); }catch(e){} },
+  progress:function(p){ try{ if(this.ready) window.CrazyGames.SDK.game.reportGameCompletedPercentage(Math.max(0,Math.min(100,Math.round(p)))); }catch(e){} }
+};
+
+/* ============ TROY audio — fully procedural WebAudio, original synthesis ============
+   No audio assets, no third-party sounds. Portal mute (SDK settings.muteAudio)
+   always takes priority over the in-game toggle. */
+window.AudioSys={
+  ctx:null, master:null, musicGain:null, _ambOn:false, _ambTimer:null,
+  muted:(function(){ try{ return localStorage.getItem('troyMuted')==='1'; }catch(e){ return false; } })(),
+  ensure:function(){
+    if(this.ctx){ if(this.ctx.state==='suspended'){ try{this.ctx.resume();}catch(e){} } return true; }
+    try{
+      var AC=window.AudioContext||window.webkitAudioContext;
+      if(!AC) return false;
+      this.ctx=new AC();
+      this.master=this.ctx.createGain(); this.master.connect(this.ctx.destination);
+      this.musicGain=this.ctx.createGain(); this.musicGain.gain.value=0.5;
+      this.musicGain.connect(this.master);
+      this.applyMute();
+      this.startAmbient();
+      return true;
+    }catch(e){ return false; }
+  },
+  effectiveMute:function(){ return this.muted || (window.CG&&CG.portalMuted); },
+  applyMute:function(){
+    var m=this.effectiveMute();
+    if(this.master){ try{ this.master.gain.value=m?0:1; }catch(e){} }
+    var b=document.getElementById('mute-btn');
+    if(b) b.textContent=m?'\uD83D\uDD07':'\uD83D\uDD0A';
+  },
+  toggle:function(){
+    this.muted=!this.muted;
+    try{ localStorage.setItem('troyMuted',this.muted?'1':'0'); }catch(e){}
+    if(!this.muted) this.ensure();
+    this.applyMute();
+    if(!this.muted) this.click();
+  },
+  tone:function(freq,dur,type,vol,when,slideTo){
+    if(!this.ensure()) return;
+    if(this.effectiveMute()) return;
+    try{
+      var t=this.ctx.currentTime+(when||0);
+      var o=this.ctx.createOscillator(), g=this.ctx.createGain();
+      o.type=type||'sine'; o.frequency.setValueAtTime(freq,t);
+      if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,t+dur);
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(vol||0.2,t+0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+      o.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t+dur+0.05);
+    }catch(e){}
+  },
+  noise:function(dur,vol,when,lpFreq){
+    if(!this.ensure()) return;
+    if(this.effectiveMute()) return;
+    try{
+      var t=this.ctx.currentTime+(when||0);
+      var len=Math.floor(this.ctx.sampleRate*dur);
+      var buf=this.ctx.createBuffer(1,len,this.ctx.sampleRate);
+      var d=buf.getChannelData(0);
+      for(var i=0;i<len;i++) d[i]=(Math.random()*2-1)*(1-i/len);
+      var s=this.ctx.createBufferSource(); s.buffer=buf;
+      var f=this.ctx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=lpFreq||800;
+      var g=this.ctx.createGain(); g.gain.value=vol||0.2;
+      s.connect(f); f.connect(g); g.connect(this.master);
+      s.start(t);
+    }catch(e){}
+  },
+  click:function(){ this.tone(660,0.07,'square',0.08); },
+  build:function(){ this.tone(659.25,0.35,'sine',0.18); this.tone(880,0.5,'sine',0.18,0.12); },
+  battle:function(){
+    var self=this;
+    [0,0.28,0.56].forEach(function(w){
+      self.tone(95,0.22,'sine',0.30,w,45);
+      self.noise(0.12,0.14,w,500);
+    });
+    this.tone(220,0.4,'sawtooth',0.05,0.1,110);
+  },
+  victory:function(){
+    var notes=[523.25,659.25,783.99,1046.5];
+    for(var i=0;i<notes.length;i++) this.tone(notes[i],0.45,'triangle',0.16,i*0.14);
+    this.tone(1318.5,0.8,'sine',0.10,0.56);
+  },
+  defeat:function(){ this.tone(220,0.5,'sawtooth',0.10,0,110); this.tone(146.83,0.7,'sawtooth',0.10,0.2,98); },
+  coin:function(){ this.tone(987.77,0.09,'square',0.07); this.tone(1318.5,0.14,'square',0.07,0.07); },
+  startAmbient:function(){
+    if(this._ambOn||!this.ctx||!this.musicGain) return;
+    this._ambOn=true;
+    var self=this;
+    var scale=[146.83,174.61,196.00,220.00,261.63,293.66,349.23]; // D-minor bronze-age color
+    var i=0;
+    var playPad=function(){
+      if(self.effectiveMute()||!self.ctx) return;
+      try{
+        var f=scale[i%scale.length]; i+=1+Math.floor(Math.random()*2);
+        var t=self.ctx.currentTime;
+        [0,4,7].forEach(function(st){
+          var ff=f*Math.pow(2,st/12);
+          var o=self.ctx.createOscillator(), g=self.ctx.createGain();
+          o.type='triangle'; o.frequency.value=ff*(1+(Math.random()-0.5)*0.004);
+          g.gain.setValueAtTime(0.0001,t);
+          g.gain.linearRampToValueAtTime(0.035,t+1.2);
+          g.gain.linearRampToValueAtTime(0.0001,t+4.2);
+          o.connect(g); g.connect(self.musicGain);
+          o.start(t); o.stop(t+4.4);
+        });
+      }catch(e){}
+    };
+    playPad();
+    this._ambTimer=setInterval(playPad,4600);
+  }
+};
 
 /* ---------------- main loop & init ---------------- */
 let saveCounter=0;
@@ -6229,6 +6418,8 @@ function tick(){
   render();
 }
 function init(){
+  CG.boot(); // CrazyGames SDK init (async; safe no-op off-portal)
+  var __sp=document.getElementById('boot-splash'); if(__sp) __sp.style.display='none';
   loadGameArt();   // painted sprites + resource pictures (async; pop in when ready)
   const loaded=load();
   S = loaded || defaultState();
@@ -6258,6 +6449,9 @@ function init(){
   window.addEventListener('pagehide', save);
   document.addEventListener('visibilitychange', ()=>{ if(document.hidden) save(); });
   $('#modal-root').addEventListener('click', e=>{ if(e.target.id==='modal-root'){ if(WATCH.active) backToReport(); else closeModal(); } });
+  document.addEventListener('click', function(e){ if(e.target&&e.target.closest&&e.target.closest('.btn')) AudioSys.click(); });
+  AudioSys.applyMute();
+  CG.gameReady(); // -> SDK loadingStop()
 }
 document.addEventListener('DOMContentLoaded', init);
 
